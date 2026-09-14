@@ -8,9 +8,9 @@ the client's own recurring "Informe de Gestión CSOC" Word template -- see
 docs/style-notes if present, or the original file the client shared.
 Deliberately NOT replicated: the cover's curved banner graphic and stock
 photography (fragile/out of scope for python-docx, and not ours to source),
-and the pervasive cyan highlight on every paragraph in their file. Section/
-subsection number badges and the cover title keep a small highlight accent;
-summary paragraphs stay plain (see _add_summary_paragraph).
+and the client file's pervasive cyan/yellow highlighter -- dropped
+everywhere per user feedback after seeing it in real generated reports
+(cover title, section/subsection number badges, summary paragraphs).
 """
 import io
 from pathlib import Path
@@ -20,7 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
@@ -287,8 +287,7 @@ def _add_summary_paragraph(document: Document, text: str) -> None:
 
 def _render_subsection(document: Document, sub: Subsection) -> None:
     heading = document.add_heading(level=2)
-    num_run = heading.add_run(f"{sub.number} ")
-    num_run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    heading.add_run(f"{sub.number} ")
     heading.add_run(sub.title)
 
     if not sub.available:
@@ -306,8 +305,7 @@ def _render_subsection(document: Document, sub: Subsection) -> None:
 
 def _render_section(document: Document, section: Section) -> None:
     heading = document.add_heading(level=1)
-    num_run = heading.add_run(f"{section.number}. ")
-    num_run.font.highlight_color = WD_COLOR_INDEX.TURQUOISE
+    heading.add_run(f"{section.number}. ")
     heading.add_run(section.title)
 
     if not section.available:
@@ -344,14 +342,12 @@ def _add_cover(document: Document, spec: ReportSpecification) -> None:
     run.bold = True
     run.font.size = Pt(28)
     run.font.color.rgb = DARK_GREEN
-    run.font.highlight_color = WD_COLOR_INDEX.TURQUOISE
 
     subtitle = document.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = subtitle.add_run("Servicio de Monitoreo SOC")
     run.font.size = Pt(16)
     run.font.color.rgb = DARK_GREEN
-    run.font.highlight_color = WD_COLOR_INDEX.TURQUOISE
 
     # Lightweight nod to the template's curved brand banner -- a solid divider
     # bar, not an attempt at the original's decorative curve/photo collage.
