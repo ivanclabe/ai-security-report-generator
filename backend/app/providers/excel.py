@@ -2,9 +2,19 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from app.models.domain import AlertMetrics, Company, EmailRarityEntry, Notification, NormalizedSecurityAlert
+from app.models.domain import (
+    AlertMetrics,
+    Company,
+    EmailRarityEntry,
+    NormalizedSecurityAlert,
+    Notification,
+)
 from app.providers.base import DataProvider
-from app.providers.excel_ingestion import ingest_alarmas_sheet, ingest_email_rarity_ranking, load_mitre_catalog
+from app.providers.excel_ingestion import (
+    ingest_alarmas_sheet,
+    ingest_email_rarity_ranking,
+    load_mitre_catalog,
+)
 
 
 def _slugify(value: str) -> str:

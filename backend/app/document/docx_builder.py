@@ -26,7 +26,12 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from app.schemas.report_spec import ReportSpecification, Section, SimpleTable, Subsection
+from app.schemas.report_spec import (
+    ReportSpecification,
+    Section,
+    SimpleTable,
+    Subsection,
+)
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 LOGO_PATH = ASSETS_DIR / "invotecsa_logo.png"

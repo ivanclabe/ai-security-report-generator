@@ -5,12 +5,16 @@ from typing import Any
 
 from langchain_core.callbacks import get_usage_metadata_callback
 
-from app.services.repositories import ConversationRepository, ReportRepository, UserRepository
 from app.services.report.execution_tracking import finish_execution, start_execution
 from app.services.report.pipeline import run_deterministic
 from app.services.report.progress_messages import STATUS_MESSAGES
 from app.services.report.request import ReportRequest
 from app.services.report.templates import DEFAULT_TEMPLATE_KEY
+from app.services.repositories import (
+    ConversationRepository,
+    ReportRepository,
+    UserRepository,
+)
 
 logger = logging.getLogger(__name__)
 

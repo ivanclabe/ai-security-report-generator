@@ -1,6 +1,10 @@
 import pytest
 
-from app.services.report.templates import DEFAULT_TEMPLATE_KEY, get_template, register_template
+from app.services.report.templates import (
+    DEFAULT_TEMPLATE_KEY,
+    get_template,
+    register_template,
+)
 
 
 def test_default_template_is_registered():

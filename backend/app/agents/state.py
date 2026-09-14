@@ -53,8 +53,15 @@ class ReportRequestUpdate(BaseModel):
     company: str | None = Field(default=None, description="Company name mentioned, if any.")
     start_date: str | None = Field(default=None, description="ISO date (YYYY-MM-DD), inferred if relative.")
     end_date: str | None = Field(default=None, description="ISO date (YYYY-MM-DD), inferred if relative.")
-    report_type: str | None = Field(default=None, description="e.g. general, executive, focused, comparison")
-    audience: str | None = Field(default=None, description="e.g. executive, technical, board")
+    report_type: str | None = Field(
+        default=None,
+        description="Report template key. Only 'csoc_mensual' exists today -- leave this null "
+        "unless the user names a template that doesn't exist yet; do NOT use this for tone/focus "
+        "requests like 'more executive' or 'more technical', that's the `audience` field.",
+    )
+    audience: str | None = Field(
+        default=None, description="Tone/detail level requested, e.g. 'ejecutivo', 'tecnico', 'general'."
+    )
     focus_categories: list[str] | None = Field(
         default=None,
         description="Security alert categories to focus on, replacing any prior focus, exactly as the user "

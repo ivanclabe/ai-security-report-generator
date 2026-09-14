@@ -9,7 +9,13 @@ implementation returning the same normalized shape.
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from app.models.domain import AlertMetrics, Company, EmailRarityEntry, Notification, NormalizedSecurityAlert
+from app.models.domain import (
+    AlertMetrics,
+    Company,
+    EmailRarityEntry,
+    NormalizedSecurityAlert,
+    Notification,
+)
 
 
 class DataProvider(ABC):

@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from app.agents.state import ReportRequestUpdate
-from app.services.report.narrative import ReportNarrative
 from app.schemas.report_spec import EvidenceRef, KeyFinding
+from app.services.report.narrative import ReportNarrative
 
 
 class _FakeStructuredRunnable:
@@ -124,8 +124,9 @@ async def test_modification_reuses_data_when_only_narrative_changes(monkeypatch)
         lambda: _FakeChatModel(lambda: next(narrative_responses)),
     )
 
-    from app.agents.graph import build_graph
     from langgraph.checkpoint.memory import MemorySaver
+
+    from app.agents.graph import build_graph
 
     graph = build_graph().compile(checkpointer=MemorySaver())
     config = {"configurable": {"thread_id": "conv-3"}}

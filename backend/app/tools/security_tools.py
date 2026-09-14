@@ -11,7 +11,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models.domain import AlertMetrics, Company, EmailRarityEntry, NormalizedSecurityAlert, Notification
+from app.models.domain import (
+    AlertMetrics,
+    Company,
+    EmailRarityEntry,
+    NormalizedSecurityAlert,
+    Notification,
+)
 from app.providers.base import DataProvider
 
 

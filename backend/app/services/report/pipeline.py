@@ -15,7 +15,11 @@ from typing import Any
 
 from app.services.report.analysis import analyze
 from app.services.report.collection import CompanyNotFoundError, collect
-from app.services.report.document import SUPPORTED_FORMATS, DocumentGenerationError, render
+from app.services.report.document import (
+    SUPPORTED_FORMATS,
+    DocumentGenerationError,
+    render,
+)
 from app.services.report.progress_messages import STATUS_MESSAGES
 from app.services.report.request import ReportRequest
 from app.services.report.specification import build_specification

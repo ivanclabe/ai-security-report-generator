@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from app.services.report.narrative import ReportNarrative
 from app.agents.state import ReportRequestUpdate
 from app.schemas.report_spec import EvidenceRef, KeyFinding
+from app.services.report.narrative import ReportNarrative
 
 
 class _FakeStructuredRunnable:

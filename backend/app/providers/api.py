@@ -17,7 +17,13 @@ response.
 """
 from datetime import datetime
 
-from app.models.domain import AlertMetrics, Company, EmailRarityEntry, Notification, NormalizedSecurityAlert
+from app.models.domain import (
+    AlertMetrics,
+    Company,
+    EmailRarityEntry,
+    NormalizedSecurityAlert,
+    Notification,
+)
 from app.providers.base import DataProvider
 
 _NOT_IMPLEMENTED = (

@@ -5,8 +5,8 @@ from pathlib import Path
 from app.models.domain import (
     AlertMetrics,
     Company,
-    Notification,
     NormalizedSecurityAlert,
+    Notification,
     risk_level_from_score,
 )
 from app.providers.base import DataProvider

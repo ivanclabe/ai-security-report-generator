@@ -4,7 +4,11 @@ check that rejects any alarm_number the model claims but that no tool call
 actually returned this turn (see AGENT_ARCHITECTURE.md)."""
 from langchain_core.messages import AIMessage
 
-from app.agents.nodes.answer_question import AnswerWithEvidence, _make_tools, answer_question
+from app.agents.nodes.answer_question import (
+    AnswerWithEvidence,
+    _make_tools,
+    answer_question,
+)
 
 
 class _FakeStructuredRunnable:
