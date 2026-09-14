@@ -64,6 +64,17 @@ def _reset_sse_starlette_exit_event():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limit():
+    """See app.auth.reset_login_rate_limit -- the limiter's attempt log is
+    process-global, so without this, tests accumulate real login attempts
+    against each other and start tripping 429 partway through a full run."""
+    from app.auth import reset_login_rate_limit
+
+    reset_login_rate_limit()
+    yield
+
+
 class _FakeSupabaseTable:
     """Returns copies from every read, matching real PostgREST semantics (a
     fresh JSON payload per request) -- some repository methods mutate the

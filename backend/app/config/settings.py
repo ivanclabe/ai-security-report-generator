@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # see app/services/report/document.py. Override if it's not on PATH under this name.
     soffice_binary: str = "soffice"
 
+    # "development" | "production" -- gates the insecure-defaults startup check in
+    # main.py (SECURITY_REVIEW.md). Set SYSTEM_VERSION at container build time
+    # (e.g. from `git rev-parse --short HEAD` in CI) for images built without a
+    # .git directory -- see app/services/system_version.py.
+    environment: str = "development"
+    system_version: str = ""
+
     cors_origins: list[str] = ["http://localhost:5173"]
 
     # Conversations/messages/reports live in Supabase (tables prefixed "in_"),

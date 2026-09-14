@@ -10,6 +10,7 @@ from app.services import supabase_rest as db
 from app.services.db import new_id, now_iso
 from app.services.report.cost_estimation import estimate_cost_usd
 from app.services.report.request import ReportRequest
+from app.services.system_version import get_system_version
 
 
 async def start_execution(
@@ -38,6 +39,7 @@ async def start_execution(
             "error_messages": [],
             "usage_metadata": {},
             "estimated_cost_usd": None,
+            "system_version": get_system_version(),
             "started_at": now_iso(),
         },
     )
