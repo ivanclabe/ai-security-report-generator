@@ -1,0 +1,11 @@
+# Dev/eval-only dependencies -- deliberately NOT in the main requirements.txt
+# (Streamlit dashboard + TruLens tracing add real weight and aren't needed to
+# run the app itself). Install into a separate venv:
+#
+#   python3.12 -m venv .venv-eval && source .venv-eval/bin/activate
+#   pip install -r requirements.txt -r evals/requirements-eval.txt
+trulens-core==2.14.0
+trulens-feedback==2.14.0
+trulens-providers-anthropic==2.14.0
+trulens-dashboard==2.14.0
+jsonschema

@@ -1,0 +1,20 @@
+{
+  "_source": "ID Mitre sheet, ANEXO reporte alarmas TPS Julio.xlsx (official MITRE ATT&CK tactics, ES) plus one client-specific custom code",
+  "tactics": [
+    {"id": "TA0043", "name_es": "Reconocimiento", "description_es": "El adversario está intentando reunir información que pueda utilizar para planificar operaciones futuras.", "is_custom": false},
+    {"id": "TA0042", "name_es": "Desarrollo de recursos", "description_es": "El adversario está intentando establecer recursos que pueda utilizar para apoyar las operaciones.", "is_custom": false},
+    {"id": "TA0001", "name_es": "Acceso inicial", "description_es": "El adversario está intentando entrar en tu red.", "is_custom": false},
+    {"id": "TA0002", "name_es": "Ejecución", "description_es": "El adversario está intentando ejecutar código malicioso.", "is_custom": false},
+    {"id": "TA0003", "name_es": "Persistencia", "description_es": "El adversario está intentando mantener su posición.", "is_custom": false},
+    {"id": "TA0004", "name_es": "Escalada de privilegios", "description_es": "El adversario está intentando obtener permisos de nivel superior.", "is_custom": false},
+    {"id": "TA0005", "name_es": "Evasión de defensa", "description_es": "El adversario está intentando evitar ser detectado.", "is_custom": false},
+    {"id": "TA0006", "name_es": "Acceso a credenciales", "description_es": "El adversario está intentando robar nombres de cuentas y contraseñas.", "is_custom": false},
+    {"id": "TA0007", "name_es": "Descubrimiento", "description_es": "El adversario está intentando descubrir tu entorno.", "is_custom": false},
+    {"id": "TA0008", "name_es": "Movimiento lateral", "description_es": "El adversario está intentando moverse a través de tu entorno.", "is_custom": false},
+    {"id": "TA0009", "name_es": "Recopilación", "description_es": "El adversario está intentando recopilar datos de interés para su objetivo.", "is_custom": false},
+    {"id": "TA0011", "name_es": "Comando y control", "description_es": "El adversario está intentando comunicarse con los sistemas comprometidos para controlarlos.", "is_custom": false},
+    {"id": "TA0010", "name_es": "Exfiltración", "description_es": "El adversario está intentando robar datos.", "is_custom": false},
+    {"id": "TA0040", "name_es": "Impacto", "description_es": "El adversario está intentando manipular, interrumpir o destruir sus sistemas y datos.", "is_custom": false},
+    {"id": "CUST01", "name_es": "Disconnection", "description_es": "Código interno del cliente para eventos de desconexión de agente/sensor, fuera del catálogo oficial MITRE ATT&CK.", "is_custom": true}
+  ]
+}

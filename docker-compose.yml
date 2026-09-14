@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-5}
+      DATA_PROVIDER: ${DATA_PROVIDER:-excel}
+      MOCK_DATA_PATH: /data/mock_security_data.json
+      EXCEL_DATA_PATH: /data/thomas_tgs_tps_alarmas_julio.xlsx
+      MITRE_TACTICS_PATH: /data/mitre_tactics.json
+      SQLITE_CHECKPOINT_DB_PATH: /app/storage/agent_checkpoints.sqlite3
+      REPORTS_DIR: /app/storage/generated_reports
+      CORS_ORIGINS: '["http://localhost:5173"]'
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      AUTH_USERNAME: ${AUTH_USERNAME:-master}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-123456}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY to a random value}
+    volumes:
+      - backend_storage:/app/storage
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+    depends_on:
+      - backend
+
+volumes:
+  backend_storage:
