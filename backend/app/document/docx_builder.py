@@ -8,10 +8,9 @@ the client's own recurring "Informe de Gestión CSOC" Word template -- see
 docs/style-notes if present, or the original file the client shared.
 Deliberately NOT replicated: the cover's curved banner graphic and stock
 photography (fragile/out of scope for python-docx, and not ours to source),
-and the pervasive cyan highlight on every paragraph in their file -- that
-one is applied only to each section's summary paragraph here, since across
-their whole document it's used consistently as "highlight this section's
-opening sentence," not as a blanket style.
+and the pervasive cyan highlight on every paragraph in their file. Section/
+subsection number badges and the cover title keep a small highlight accent;
+summary paragraphs stay plain (see _add_summary_paragraph).
 """
 import io
 from pathlib import Path
@@ -278,13 +277,12 @@ def _add_unavailable_notice(document: Document, reason: str) -> None:
 
 
 def _add_summary_paragraph(document: Document, text: str) -> None:
-    """Cyan-highlighted, matching the one formatting rule that's consistent
-    across the entire client template: highlight each section's opening
-    summary sentence -- not applied elsewhere (tables, recommendations,
-    alert descriptions stay plain, exactly as in their file)."""
-    p = document.add_paragraph()
-    run = p.add_run(text)
-    run.font.highlight_color = WD_COLOR_INDEX.TURQUOISE
+    """Plain paragraph for each section's opening summary sentence. Used to
+    replicate the client template's cyan highlight here, but across a full
+    multi-line summary that reads as a wall of highlighter, not the short
+    single-line emphasis it is in their file -- dropped per user feedback
+    after seeing it in a real generated report."""
+    document.add_paragraph(text)
 
 
 def _render_subsection(document: Document, sub: Subsection) -> None:
