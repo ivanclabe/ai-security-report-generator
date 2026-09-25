@@ -10,6 +10,7 @@ interface ConversationState {
   isStreaming: boolean;
   progressMessage: string | null;
   error: string | null;
+  isLoadingConversation: boolean;
 
   loadConversations: () => Promise<void>;
   startNewConversation: () => Promise<void>;
@@ -41,6 +42,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   isStreaming: false,
   progressMessage: null,
   error: null,
+  isLoadingConversation: false,
 
   loadConversations: async () => {
     const conversations = await api.listConversations();
@@ -63,7 +65,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   selectConversation: async (id: string) => {
     set({ activeConversationId: id });
     if (get().messagesByConversation[id]) return;
-    const detail = await api.getConversation(id);
+    set({ isLoadingConversation: true });
+    const detail = await api.getConversation(id).finally(() => set({ isLoadingConversation: false }));
     const messages: ChatMessage[] = detail.messages.map((m) => ({
       id: m.id,
       role: m.role,
@@ -102,7 +105,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         [id]: [...(state.messagesByConversation[id] ?? []), userMessage],
       },
       isStreaming: true,
-      progressMessage: "Understanding request...",
+      progressMessage: "Entendiendo la solicitud...",
       error: null,
     }));
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { downloadReport } from "../services/api";
 import { useConversationStore } from "../store/useConversationStore";
 import type { ReportInfo } from "../types";
+import { IconDownload } from "./icons";
 
 const QUICK_ACTIONS = [
   "Hazlo más ejecutivo.",
@@ -44,7 +45,7 @@ export function ReportCard({
     <div className="mt-3 w-full max-w-md rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-slate-900">{report.title || "Informe de Seguridad"}</p>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+        <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">
           v{report.version}
         </span>
       </div>
@@ -53,11 +54,16 @@ export function ReportCard({
       <button
         onClick={handleDownload}
         disabled={isDownloading}
-        className="mt-3 inline-flex items-center rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
       >
+        <IconDownload className="h-3.5 w-3.5" aria-hidden="true" />
         {isDownloading ? "Descargando..." : `Descargar Informe (.${extension})`}
       </button>
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-red-600">
+          {error}
+        </p>
+      )}
 
       {showQuickActions && (
         <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
@@ -66,7 +72,7 @@ export function ReportCard({
               key={prompt}
               onClick={() => sendUserMessage(prompt)}
               disabled={isStreaming}
-              className="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600 hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600 transition-colors hover:border-brand-400 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {prompt}
             </button>
