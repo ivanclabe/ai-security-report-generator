@@ -9,14 +9,29 @@ from pydantic import BaseModel
 
 from app.models.domain import Company
 from app.providers.factory import get_data_provider
+from app.services.company_registry import get_company_registry
 from app.services.report.request import ReportRequest
 from app.tools import security_tools as tools
 
 
 class CompanyNotFoundError(Exception):
-    def __init__(self, company_name: str | None):
+    """The requested company text matched no registered company, or matched
+    several (then `candidates` lists them so the user can pick one)."""
+
+    def __init__(self, company_name: str | None, candidates: list[str] | None = None):
         self.company_name = company_name
-        super().__init__(f"Client not found: {company_name}")
+        self.candidates = candidates or []
+        message = f"No se encontró la empresa '{company_name}'."
+        if self.candidates:
+            message += f" ¿Te refieres a: {', '.join(self.candidates)}?"
+        super().__init__(message)
+
+
+async def _candidate_names(text: str | None) -> list[str]:
+    try:
+        return [c.name for c in await get_company_registry().suggest(text)]
+    except Exception:  # noqa: BLE001 - suggestions are a courtesy; never mask the real "not found"
+        return []
 
 
 def _parse_date(value: str, *, end_of_day: bool = False) -> datetime:
@@ -49,7 +64,7 @@ async def collect(request: ReportRequest) -> CollectionResult:
         provider, tools.GetCompanyParams(company_id=request.company_id, name=request.company)
     )
     if company is None:
-        raise CompanyNotFoundError(request.company)
+        raise CompanyNotFoundError(request.company, await _candidate_names(request.company or request.company_id))
 
     start_date = _parse_date(request.start_date)
     end_date = _parse_date(request.end_date, end_of_day=True)

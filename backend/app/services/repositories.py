@@ -128,15 +128,6 @@ class ReportRepository:
         await db.delete("in_reports", {"conversation_id": conversation_id})
 
 
-class CompanyRepository:
-    """Reads in_companies -- populated by ingestion_service.py (Fase 3) as a
-    side effect of importing each client's data source. Backs the "Empresa"
-    selector in the deterministic-flow form (DETERMINISTIC_FLOW.md)."""
-
-    async def list_all(self) -> list[dict]:
-        return await db.select("in_companies", order="name.asc")
-
-
 class ReportTemplateRepository:
     async def list_active(self) -> list[dict]:
         return await db.select("in_report_templates", filters={"is_active": True}, order="name.asc")

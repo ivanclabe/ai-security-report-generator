@@ -12,14 +12,17 @@ async def collect_data(state: ReportState) -> dict:
     try:
         result = await collect(request)
     except CompanyNotFoundError as exc:
-        return {
-            "status": "awaiting_user_input",
-            "pending_question": (
+        if exc.candidates:
+            question = (
+                f"'{exc.company_name}' no identifica a una sola empresa. "
+                f"¿Cuál de estas quieres? {', '.join(exc.candidates)}"
+            )
+        else:
+            question = (
                 f"No encontré un cliente que coincida con '{exc.company_name}'. "
                 "¿Puedes confirmar el nombre exacto?"
-            ),
-            "errors": [str(exc)],
-        }
+            )
+        return {"status": "awaiting_user_input", "pending_question": question, "errors": [str(exc)]}
 
     return {
         "company_id": result.company.id,

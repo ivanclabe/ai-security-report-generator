@@ -138,3 +138,79 @@ def test_build_document_renders_table_rows(tmp_path):
         if "Crítico" in cell_texts and "19" in cell_texts:
             found = True
     assert found
+
+
+# ---- clean text: no highlighter anywhere ------------------------------------------
+
+
+def _document_xml(path) -> str:
+    import zipfile
+
+    with zipfile.ZipFile(path) as z:
+        return z.read("word/document.xml").decode("utf-8")
+
+
+def test_generated_document_has_no_highlighted_text(tmp_path):
+    """Regression: summary paragraphs, section/subsection numbers and the cover
+    title used to carry a cyan/yellow highlight. The finished document must
+    contain none, anywhere (body, tables, cover)."""
+    out = build_document(_sample_spec(), tmp_path / "r.docx")
+    xml = _document_xml(out)
+
+    assert "<w:highlight" not in xml
+    assert "w:shd" in xml  # table header shading (a cell fill, not text highlight) is intentional
+
+
+def test_summary_paragraphs_are_plain_runs(tmp_path):
+    out = build_document(_sample_spec(), tmp_path / "r.docx")
+    doc = Document(str(out))
+    summary = next(p for p in doc.paragraphs if p.text == "Resumen del inventario.")
+    assert all(run.font.highlight_color is None for run in summary.runs)
+
+
+# ---- per-company logo -------------------------------------------------------------
+
+
+def test_logo_resolution_uses_the_companys_file_and_falls_back_to_the_default(tmp_path, monkeypatch):
+    from app.document import docx_builder
+
+    logos = tmp_path / "logos"
+    logos.mkdir()
+    (logos / "thomas-tps.png").write_bytes(b"png")
+    monkeypatch.setattr(docx_builder, "LOGOS_DIR", logos)
+
+    assert docx_builder.resolve_logo_path("Thomas TPS") == logos / "thomas-tps.png"
+    assert docx_builder.resolve_logo_path("TGS BRASIL") == docx_builder.DEFAULT_LOGO_PATH  # file not supplied yet
+    assert docx_builder.resolve_logo_path(None) == docx_builder.DEFAULT_LOGO_PATH
+
+
+def test_logo_key_cannot_escape_the_logos_directory(tmp_path, monkeypatch):
+    from app.document import docx_builder
+
+    (tmp_path / "secret.png").write_bytes(b"png")
+    logos = tmp_path / "logos"
+    logos.mkdir()
+    monkeypatch.setattr(docx_builder, "LOGOS_DIR", logos)
+
+    assert docx_builder.resolve_logo_path("../secret") == docx_builder.DEFAULT_LOGO_PATH
+
+
+def test_document_embeds_the_companys_logo_when_available(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from app.document import docx_builder
+
+    logos = tmp_path / "logos"
+    logos.mkdir()
+    Image.new("RGB", (40, 20), (200, 30, 30)).save(logos / "thomas-tps.png")
+    monkeypatch.setattr(docx_builder, "LOGOS_DIR", logos)
+
+    spec = _sample_spec().model_copy(update={"company_logo": "Thomas TPS"})
+    out = build_document(spec, tmp_path / "tps.docx")
+
+    import zipfile
+
+    with zipfile.ZipFile(out) as z:
+        media = [n for n in z.namelist() if n.startswith("word/media/")]
+        sizes = {z.getinfo(n).file_size for n in media if n.endswith(".png")}
+    assert (logos / "thomas-tps.png").stat().st_size in sizes

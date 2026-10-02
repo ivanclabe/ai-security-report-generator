@@ -6,7 +6,8 @@ alarm that doesn't exist"; this catches the subtler case of "cited a real
 alarm but described/interpreted it in a way the data doesn't support."
 
 Runs the REAL production code path (collect_data node + generate_narrative,
-the same function the app calls) against the real THOMAS TGS-TPS Excel data,
+the same function the app calls) against the real THOMAS TGS-TPS alarms delivered
+by the configured data source (DATA_PROVIDER=http),
 under a few different filters, and scores each narrative's groundedness
 against the exact DATA JSON the LLM was shown, using Anthropic Claude as the
 judge via TruLens's Anthropic provider.

@@ -8,10 +8,14 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       LLM_MODEL: ${LLM_MODEL:-claude-sonnet-5}
-      DATA_PROVIDER: ${DATA_PROVIDER:-excel}
+      DATA_PROVIDER: ${DATA_PROVIDER:-http}
       MOCK_DATA_PATH: /data/mock_security_data.json
-      EXCEL_DATA_PATH: /data/thomas_tgs_tps_alarmas_julio.xlsx
       MITRE_TACTICS_PATH: /data/mitre_tactics.json
+      # Alarm data source -- values come from the shell/.env at `docker compose up`, never from the image.
+      SOURCE_BASE_URL: ${SOURCE_BASE_URL:-}
+      SOURCE_USERNAME: ${SOURCE_USERNAME:-}
+      SOURCE_PASSWORD: ${SOURCE_PASSWORD:-}
+      SOURCE_VERIFY_TLS: ${SOURCE_VERIFY_TLS:-true}
       SQLITE_CHECKPOINT_DB_PATH: /app/storage/agent_checkpoints.sqlite3
       REPORTS_DIR: /app/storage/generated_reports
       CORS_ORIGINS: '["http://localhost:5173"]'

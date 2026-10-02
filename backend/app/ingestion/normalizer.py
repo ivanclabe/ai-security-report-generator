@@ -1,10 +1,13 @@
-"""Normalizes a client alarm export (the "Alarmas" sheet) into
-NormalizedSecurityAlert records.
+"""Normalizes the alarm rows delivered by the data source (the detailed-alarms
+CSV export) into NormalizedSecurityAlert records.
 
 This is the one place that knows about the messy source format: multi-value
 IP/hostname fields, numeric-or-"ANULADO" severity, _x000D_ text artifacts,
 inconsistent nulls. Everything downstream (tools, agent, report builder)
 only ever sees the clean NormalizedSecurityAlert shape.
+
+Input is a plain DataFrame (see csv_decoder.py for bytes -> DataFrame), so the
+same normalization serves any future source that can produce those columns.
 """
 import json
 import re
@@ -24,9 +27,9 @@ from app.models.domain import (
 
 _MULTI_VALUE_SPLIT = re.compile(r"[-\t\n]+")
 
-# Unconditionally required columns for the "Alarmas" sheet, checked once
-# up front -- a single clear diagnostic instead of one warning per row when
-# the client's export renames or drops a column entirely.
+# Unconditionally required columns, checked once up front -- a single clear
+# diagnostic instead of one warning per row when the source renames or drops
+# a column entirely.
 _REQUIRED_COLUMNS = ("id", "cliente", "timestamp")
 # At least one of these must be present to derive created_at.
 _REQUIRED_ANY_OF = ("created_at", "fecha_de_creacion_alarma")
@@ -88,6 +91,18 @@ def _to_str_or_none(value) -> str | None:
     return str(value).strip() or None
 
 
+def _parse_severity(raw) -> int | None:
+    """Severity arrives as 80, 80.0 (float) or "80"/"80.0" (CSV text)."""
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(float(str(raw).strip().replace(",", ".")))
+    except (TypeError, ValueError):
+        return None
+
+
 def _row_to_raw_record(row: pd.Series) -> dict:
     record = {}
     for key, value in row.items():
@@ -100,74 +115,34 @@ def _row_to_raw_record(row: pd.Series) -> dict:
     return record
 
 
-class ExcelIngestionResult:
+class NormalizationResult:
     def __init__(self, alerts: list[NormalizedSecurityAlert], warnings: list[str]):
         self.alerts = alerts
         self.warnings = warnings
 
 
-def _check_required_columns(df: pd.DataFrame, sheet_name: str) -> list[str]:
+def _check_required_columns(df: pd.DataFrame, source_label: str) -> list[str]:
     """One aggregated diagnostic for missing columns, instead of a warning per
-    row repeating the same cause 169 times (or however many rows the sheet has)."""
+    row repeating the same cause for every row."""
     missing = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
     if not any(c in df.columns for c in _REQUIRED_ANY_OF):
         missing.append(f"one of {_REQUIRED_ANY_OF}")
     if not missing:
         return []
-    return [f"Sheet '{sheet_name}': missing required column(s): {', '.join(missing)}"]
+    return [f"'{source_label}': missing required column(s): {', '.join(missing)}"]
 
 
-def ingest_email_rarity_ranking(
-    excel_path: Path, sheet_name: str = "Top 10 Correos rareza"
-) -> list[tuple[str, int]]:
-    """Reads the client's own precomputed pivot of email recipients with the
-    highest volume of high-rarity (96-100%) inbound email, instead of
-    recomputing it from the 34k-row raw log -- the pivot's own numbers are
-    the exact source of truth the client's report already publishes, so
-    re-deriving them risks silently disagreeing with a number the client
-    already trusts.
-    """
-    try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, header=None)
-    except ValueError:
-        return []
-
-    entries: list[tuple[str, int]] = []
-    for _, row in df.iterrows():
-        label = _to_str_or_none(row.get(0))
-        count = row.get(1)
-        if not label or label.strip().lower() == "total general":
-            continue
-        if "@" not in label:
-            continue
-        try:
-            entries.append((label, int(count)))
-        except (TypeError, ValueError):
-            continue
-    return entries
-
-
-def ingest_alarmas_sheet(
-    excel_path: Path, mitre_catalog: dict[str, MitreTactic], sheet_name: str = "Alarmas"
-) -> ExcelIngestionResult:
-    """Parser stage (reads the file) -- delegates the actual normalization/validation
-    to _ingest_alarmas_dataframe, which takes a plain DataFrame so it's directly
-    testable with small synthetic fixtures instead of real/temp Excel files."""
-    df = pd.read_excel(excel_path, sheet_name=sheet_name)
-    return _ingest_alarmas_dataframe(df, mitre_catalog, sheet_name)
-
-
-def _ingest_alarmas_dataframe(
-    df: pd.DataFrame, mitre_catalog: dict[str, MitreTactic], sheet_name: str = "Alarmas"
-) -> ExcelIngestionResult:
-    column_warnings = _check_required_columns(df, sheet_name)
+def normalize_alarm_rows(
+    df: pd.DataFrame, mitre_catalog: dict[str, MitreTactic], source_label: str = "Alarmas"
+) -> NormalizationResult:
+    column_warnings = _check_required_columns(df, source_label)
     if column_warnings:
         # A missing column fails every row identically -- one diagnostic beats
         # N repeats of the same underlying cause.
-        return ExcelIngestionResult(alerts=[], warnings=column_warnings)
+        return NormalizationResult(alerts=[], warnings=column_warnings)
 
     if df.empty:
-        return ExcelIngestionResult(alerts=[], warnings=[f"Sheet '{sheet_name}' contains no data rows."])
+        return NormalizationResult(alerts=[], warnings=[f"'{source_label}' contains no data rows."])
 
     warnings: list[str] = []
     alerts: list[NormalizedSecurityAlert] = []
@@ -210,10 +185,8 @@ def _ingest_alarmas_dataframe(
             severity_score = None
             is_voided = True
         else:
-            try:
-                severity_score = int(raw_severity)
-            except (TypeError, ValueError):
-                severity_score = None
+            severity_score = _parse_severity(raw_severity)
+            if severity_score is None:
                 warnings.append(f"{row_label} (id={raw_id}): unparseable severity '{raw_severity}', treated as unknown")
 
         computed_risk = risk_level_from_score(severity_score) if not is_voided else RiskLevel.ANULADO
@@ -301,4 +274,4 @@ def _ingest_alarmas_dataframe(
             )
         )
 
-    return ExcelIngestionResult(alerts=alerts, warnings=warnings)
+    return NormalizationResult(alerts=alerts, warnings=warnings)

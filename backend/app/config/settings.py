@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -13,11 +14,31 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     llm_model: str = "claude-sonnet-5"
 
-    data_provider: str = "excel"
+    # "http" = the remote alarm source (SOURCE_* below); "mock" = synthetic demo/test data.
+    data_provider: str = "http"
     mock_data_path: Path = PROJECT_ROOT / "data" / "mock_security_data.json"
-    excel_data_path: Path = PROJECT_ROOT / "data" / "thomas_tgs_tps_alarmas_julio.xlsx"
-    excel_sheet_name: str = "Alarmas"
     mitre_tactics_path: Path = PROJECT_ROOT / "data" / "mitre_tactics.json"
+
+    # --- Alarm data source (HTTP) --------------------------------------------
+    # Every address and credential lives here (backend/.env), never in code:
+    # moving the source to another IP/host is a one-line change to
+    # SOURCE_BASE_URL. Credentials are SecretStr so they never show up in
+    # repr()/logs of this object.
+    source_base_url: str = ""
+    source_alarms_path: str = "/detallado_alarmas.php"
+    source_indicators_path: str = "/indicadores.php"
+    source_username: str = ""
+    source_password: SecretStr = SecretStr("")
+    # True = verify the server certificate with the system CAs. For an internal
+    # server with its own CA set SOURCE_CA_BUNDLE to that CA file instead of
+    # turning verification off.
+    source_verify_tls: bool = True
+    source_ca_bundle: str = ""
+    source_timeout_seconds: float = 30.0
+    # Upper bound sent as `limite=`; a response with exactly this many rows is
+    # reported as possibly truncated.
+    source_alarms_limit: int = 1000
+    source_cache_ttl_seconds: int = 300
 
     sqlite_checkpoint_db_path: Path = BACKEND_DIR / "agent_checkpoints.sqlite3"
 

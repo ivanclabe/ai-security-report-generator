@@ -1,5 +1,10 @@
 # INGESTION_ARCHITECTURE.md — Fase 3: Ingesta y normalización de datos
 
+> **Actualización (octubre 2026):** la fuente Excel descrita en este documento fue **reemplazada**
+> por la fuente HTTP del cliente. Las secciones 1-6 se conservan como historia de diseño; el estado
+> vigente está en la §8 al final. `ExcelDataProvider`, `excel_ingestion.py` y el placeholder
+> `ApiDataProvider` ya no existen.
+
 > Basado en [ARCHITECTURE_ASSESSMENT.md](ARCHITECTURE_ASSESSMENT.md) (Fase 0),
 > [ARCHITECTURE_TARGET.md](ARCHITECTURE_TARGET.md) (Fase 1) y [DATA_MODEL.md](DATA_MODEL.md)
 > (Fase 2). A diferencia de las fases anteriores, esta **sí implementa código** — el prompt maestro
@@ -219,3 +224,52 @@ contra un servicio real. Se agrega el punto de extensión concreto sin inventar 
 **Fin de la Fase 3 (documento).** El código implementado a continuación en esta misma fase sigue
 exactamente lo descrito arriba. Al finalizar, se corre la suite completa de tests antes de pedir
 aprobación para la Fase 4.
+
+
+## 8. Estado vigente: fuente HTTP + registro de empresas
+
+```
+Fuente remota (HTTPS, Basic Auth)
+   │  detallado_alarmas.php?desde&hasta&cliente&limite&export=csv   (+ indicadores.php)
+   ▼
+app/ingestion/   ── aislada del agente: nada en app/agents ni app/services/report la importa ──
+   config.py        SOURCE_* (.env) → SourceConfig         (IP, rutas, credenciales, TLS, límites)
+   requests.py      SourceRequest por empresa/período       (cliente= viene del registro)
+   client.py        Basic Auth + sesión reutilizable + renovación si expira + errores accionables
+   csv_decoder.py   bytes → DataFrame (BOM/cp1252, delimitador, detecta HTML con HTTP 200)
+   normalizer.py    filas → NormalizedSecurityAlert        (reglas de severidad/riesgo/MITRE)
+   service.py       pide + valida la empresa + caché (TTL) + listener on_fetch (auditoría)
+   ▼
+app/providers/http_source.py   HttpSourceDataProvider  (contrato DataProvider, sin cambios)
+   ▼
+tools → agente LangGraph / pipeline determinístico → informe      (sin cambios)
+```
+
+**Empresas.** Las empresas ya no se derivan de los datos: salen del registro central
+(`app/services/company_registry.py`, tabla `in_companies`, lista oficial del cliente en
+`data/companies.json`). El registro decide el nombre mostrado, el logo (`logo_key`), la serie
+Albatroz (`consecutivo`) y el valor de `cliente=` (`source_client`, o el nombre si es nulo). La
+resolución de un texto a empresa ignora mayúsculas, acentos, guiones y espacios (`THOMAS TGS-TPS` y
+`THOMAS TGS TPS` son la misma) y **nunca adivina**: si el texto coincide con varias empresas se
+devuelve la lista de candidatas. Cada request pide **una** empresa; las filas que el servidor
+devuelva de otra empresa se descartan con una advertencia, y si ninguna es de la empresa pedida
+la adquisición falla en voz alta.
+
+**Sesión y expiración.** Basic Auth no tiene sesión propia; el cliente mantiene un `httpx.AsyncClient`
+(conexiones y cookies, p. ej. `PHPSESSID`). Un 401 después de un éxito se trata como sesión expirada:
+se descarta el cliente, se reautentica y se reintenta **una** vez; un 401 en el primer intento o en
+el reintento lanza `SourceAuthenticationError` (sin bucles de login). 403, 404, 5xx, timeouts,
+errores de TLS y redirecciones a una página de login tienen mensajes propios que nombran la
+variable de entorno a revisar, nunca las credenciales.
+
+**Cambio de IP.** `SOURCE_BASE_URL` es el único lugar con la dirección; las rutas son `SOURCE_*_PATH`.
+Cambiar de servidor = editar `backend/.env` y reiniciar, sin tocar código (probado en
+`tests/test_source_client.py`).
+
+**Qué se perdió con el Excel.** El ranking "Top 10 correos de rareza" (sección 6.1 del informe) salía
+de una hoja precalculada del Excel que el CSV de alarmas no trae: ahora el informe lo declara "no
+disponible" en lugar de inventarlo. El endpoint `indicadores.php` está disponible en el cliente y en
+`scripts/probe_sources.py`, pero su formato todavía no está mapeado (pendiente de una muestra real).
+
+**Auditoría.** Cada descarga nueva registra una fila en `in_data_imports` (hash del payload, filas,
+advertencias, URL sin credenciales) contra la `in_data_sources` de la empresa (`source_type='api'`).

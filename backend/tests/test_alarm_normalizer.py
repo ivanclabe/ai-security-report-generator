@@ -1,16 +1,15 @@
 import pandas as pd
 
-from app.providers.excel_ingestion import (
-    _ingest_alarmas_dataframe,
-    ingest_alarmas_sheet,
-    load_mitre_catalog,
-)
-from tests.conftest import MITRE_CATALOG_PATH, REAL_EXCEL_PATH
+from app.ingestion.csv_decoder import decode_alarms_csv
+from app.ingestion.normalizer import load_mitre_catalog, normalize_alarm_rows
+from tests.conftest import ALARMS_FIXTURE_PATH, MITRE_CATALOG_PATH
 
 
 def _ingest():
+    """The shipped CSV fixture (169 alarms of THOMAS TGS-TPS, July 2026), decoded exactly
+    as the acquisition layer decodes a response from the source."""
     catalog = load_mitre_catalog(MITRE_CATALOG_PATH)
-    return ingest_alarmas_sheet(REAL_EXCEL_PATH, catalog)
+    return normalize_alarm_rows(decode_alarms_csv(ALARMS_FIXTURE_PATH.read_bytes()), catalog)
 
 
 def _minimal_row(**overrides) -> dict:
@@ -64,7 +63,7 @@ def test_multi_value_hostname_and_ip_fields_are_split():
         assert all(h.strip() == h and h for h in a.hostnames)
 
 
-def test_description_has_no_excel_carriage_return_artifacts():
+def test_description_has_no_carriage_return_artifacts():
     result = _ingest()
     for a in result.alerts:
         assert "_x000D_" not in a.description
@@ -109,7 +108,7 @@ def test_missing_optional_fields_become_none_not_placeholder_strings():
 
 def test_missing_required_column_yields_one_aggregated_warning_not_one_per_row():
     df = pd.DataFrame([_minimal_row(), _minimal_row(id="2")]).drop(columns=["cliente"])
-    result = _ingest_alarmas_dataframe(df, {})
+    result = normalize_alarm_rows(df, {})
     assert result.alerts == []
     assert len(result.warnings) == 1
     assert "cliente" in result.warnings[0]
@@ -117,7 +116,7 @@ def test_missing_required_column_yields_one_aggregated_warning_not_one_per_row()
 
 def test_empty_sheet_yields_explicit_warning():
     df = pd.DataFrame(columns=["id", "cliente", "timestamp", "created_at"])
-    result = _ingest_alarmas_dataframe(df, {})
+    result = normalize_alarm_rows(df, {})
     assert result.alerts == []
     assert len(result.warnings) == 1
     assert "no data rows" in result.warnings[0]
@@ -125,21 +124,39 @@ def test_empty_sheet_yields_explicit_warning():
 
 def test_duplicate_alarm_number_for_same_client_is_skipped():
     df = pd.DataFrame([_minimal_row(), _minimal_row(id="2")])  # same cliente + alarma_no
-    result = _ingest_alarmas_dataframe(df, {})
+    result = normalize_alarm_rows(df, {})
     assert len(result.alerts) == 1
     assert any("duplicate" in w for w in result.warnings)
 
 
 def test_same_alarm_number_for_different_clients_is_not_a_duplicate():
     df = pd.DataFrame([_minimal_row(), _minimal_row(id="2", cliente="OTHER CO")])
-    result = _ingest_alarmas_dataframe(df, {})
+    result = normalize_alarm_rows(df, {})
     assert len(result.alerts) == 2
     assert result.warnings == []
 
 
 def test_missing_tipo_defaults_and_warns():
     df = pd.DataFrame([_minimal_row(tipo=None)])
-    result = _ingest_alarmas_dataframe(df, {})
+    result = normalize_alarm_rows(df, {})
     assert len(result.alerts) == 1
     assert result.alerts[0].alert_type == "Desconocido"
     assert any("tipo" in w for w in result.warnings)
+
+
+def test_severity_is_parsed_from_csv_text_including_decimals():
+    df = pd.DataFrame(
+        [
+            _minimal_row(severity="80"),
+            _minimal_row(id="2", alarma_no="A-2", severity="85.0"),
+            _minimal_row(id="3", alarma_no="A-3", severity="90,5"),
+            _minimal_row(id="4", alarma_no="A-4", severity="ANULADO"),
+            _minimal_row(id="5", alarma_no="A-5", severity="n/a"),
+        ]
+    )
+    result = normalize_alarm_rows(df, {})
+    by_number = {a.alarm_number: a for a in result.alerts}
+    assert [by_number[n].severity_score for n in ("A-1", "A-2", "A-3")] == [80, 85, 90]
+    assert by_number["A-4"].is_voided and by_number["A-4"].severity_score is None
+    assert by_number["A-5"].severity_score is None
+    assert sum("unparseable severity" in w for w in result.warnings) == 1

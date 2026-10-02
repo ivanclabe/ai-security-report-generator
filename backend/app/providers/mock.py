@@ -16,7 +16,7 @@ class MockDataProvider(DataProvider):
     """Serves synthetic security data loaded from a static JSON fixture.
 
     Kept for demos/tests independent of any real client file. Emits the same
-    NormalizedSecurityAlert shape as ExcelDataProvider.
+    NormalizedSecurityAlert shape as HttpSourceDataProvider.
     """
 
     def __init__(self, data_path: Path):

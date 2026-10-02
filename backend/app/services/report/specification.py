@@ -28,12 +28,18 @@ async def build_specification(request: ReportRequest, collected: dict) -> Report
     template = get_template(request.report_type)
     sections = template(collected, narrative)
 
+    # The company as the registry knows it (collect() resolved it): its official report name
+    # and logo win over whatever spelling the user typed.
+    company = collected.get("company") or {}
+    company_name = company.get("name") or request.company
+
     return ReportSpecification(
         document_control=DocumentControl(
-            titulo=f"Informe de Gestión — Servicio de Monitoreo SOC — {request.company}",
+            titulo=f"Informe de Gestión — Servicio de Monitoreo SOC — {company_name}",
             fecha_version=date.today().isoformat(),
         ),
-        company=request.company,
+        company=company_name,
+        company_logo=company.get("logo_key"),
         period=ReportPeriod(start=request.start_date, end=request.end_date),
         objective=narrative.objective,
         services=collected.get("services", []),

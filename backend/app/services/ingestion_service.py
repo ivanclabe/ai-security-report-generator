@@ -1,52 +1,26 @@
-"""Records import metadata (which file, when, how many rows, which warnings)
-into Supabase (in_companies / in_data_sources / in_data_imports) as a
-side-channel to the in-memory ExcelDataProvider -- see INGESTION_ARCHITECTURE.md.
+"""Records import metadata (which request, when, how many rows, which warnings)
+into Supabase (in_data_sources / in_data_imports) every time the acquisition
+layer fetches fresh data from the source -- see INGESTION_ARCHITECTURE.md.
 
-Deliberately NOT on the request path: ExcelDataProvider is built once per
-process (cached in providers/factory.py) synchronously; this module is called
-once from the FastAPI lifespan after the provider is already built. A
-Supabase outage here must not block the backend from serving requests --
-callers should catch and log, not propagate.
+Deliberately a side-channel hooked in as AlarmAcquisitionService's `on_fetch`
+listener, not part of the request path: a Supabase outage here must not fail a
+report (the listener swallows and logs). Companies themselves are not created
+here -- the company registry (in_companies) is the authority on which companies
+exist; an import is only ever recorded against a registered company.
 """
-import hashlib
 import logging
-import re
-from pathlib import Path
 
-from app.providers.excel import ExcelDataProvider
+from app.ingestion.service import AlarmBatch
 from app.services import supabase_rest as db
 from app.services.db import new_id, now_iso
 
 logger = logging.getLogger(__name__)
 
-
-def _slugify(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or "client"
+SOURCE_TYPE = "api"
 
 
-def _file_hash(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-async def _ensure_company(company_id: str, name: str) -> None:
-    existing = await db.select("in_companies", filters={"id": company_id})
-    if existing:
-        return
-    await db.insert(
-        "in_companies",
-        {"id": company_id, "name": name, "industry": None, "country": None, "created_at": now_iso()},
-    )
-
-
-async def _ensure_data_source(company_id: str, source_type: str, name: str) -> str:
-    existing = await db.select(
-        "in_data_sources", filters={"company_id": company_id, "source_type": source_type}
-    )
+async def _ensure_data_source(company_id: str, name: str) -> str:
+    existing = await db.select("in_data_sources", filters={"company_id": company_id, "source_type": SOURCE_TYPE})
     if existing:
         return existing[0]["id"]
     row = await db.insert(
@@ -54,9 +28,9 @@ async def _ensure_data_source(company_id: str, source_type: str, name: str) -> s
         {
             "id": new_id("source"),
             "company_id": company_id,
-            "source_type": source_type,
+            "source_type": SOURCE_TYPE,
             "name": name,
-            "config": {},
+            "config": {},  # address/credentials live in backend/.env, never in the database
             "is_active": True,
             "created_at": now_iso(),
         },
@@ -64,58 +38,36 @@ async def _ensure_data_source(company_id: str, source_type: str, name: str) -> s
     return row["id"]
 
 
-async def record_excel_import(provider: ExcelDataProvider, excel_path: Path) -> list[dict]:
-    """Upserts a company + data source per distinct client found in the sheet,
-    then records one in_data_imports row per company -- skipping companies that
-    already have an import with the same file_hash (avoids duplicate audit rows
-    when the backend restarts without the source file changing)."""
-    file_hash = _file_hash(excel_path)
-    warnings = provider.ingestion_warnings
-    alerts = provider.alerts
-    status = "failed" if not alerts and warnings else ("partial" if warnings else "success")
+async def record_import(batch: AlarmBatch) -> dict:
+    """One in_data_imports row per distinct payload (content hash) -- re-fetching
+    unchanged data does not add audit rows."""
+    company = batch.company
+    data_source_id = await _ensure_data_source(company.id, f"Albatroz — {company.name}")
 
-    alerts_by_client: dict[str, int] = {}
-    for alert in alerts:
-        alerts_by_client[alert.client] = alerts_by_client.get(alert.client, 0) + 1
+    existing = await db.select(
+        "in_data_imports", filters={"data_source_id": data_source_id, "file_hash": batch.content_hash}
+    )
+    if existing:
+        logger.info("Import ya registrado para %s (hash=%s) -- sin duplicar", company.name, batch.content_hash[:12])
+        return existing[0]
 
-    created: list[dict] = []
-    for client_name, row_count in alerts_by_client.items():
-        company_id = _slugify(client_name)
-        await _ensure_company(company_id, client_name)
-        data_source_id = await _ensure_data_source(company_id, "excel", f"Excel — {client_name}")
-
-        existing_import = await db.select(
-            "in_data_imports", filters={"data_source_id": data_source_id, "file_hash": file_hash}
-        )
-        if existing_import:
-            logger.info(
-                "Import already recorded for %s (hash=%s, import_id=%s) -- skipping duplicate",
-                client_name,
-                file_hash[:12],
-                existing_import[0]["id"],
-            )
-            created.append(existing_import[0])
-            continue
-
-        timestamp = now_iso()
-        import_row = await db.insert(
-            "in_data_imports",
-            {
-                "id": new_id("import"),
-                "data_source_id": data_source_id,
-                "company_id": company_id,
-                "source_file_ref": excel_path.name,
-                "file_hash": file_hash,
-                "status": status,
-                "row_count": row_count,
-                "warning_count": len(warnings),
-                "warnings": warnings,
-                "imported_by": None,
-                "started_at": timestamp,
-                "completed_at": timestamp,
-                "created_at": timestamp,
-            },
-        )
-        created.append(import_row)
-
-    return created
+    status = "failed" if not batch.alerts and batch.warnings else ("partial" if batch.warnings else "success")
+    timestamp = now_iso()
+    return await db.insert(
+        "in_data_imports",
+        {
+            "id": new_id("import"),
+            "data_source_id": data_source_id,
+            "company_id": company.id,
+            "source_file_ref": batch.request_url,
+            "file_hash": batch.content_hash,
+            "status": status,
+            "row_count": len(batch.alerts),
+            "warning_count": len(batch.warnings),
+            "warnings": batch.warnings,
+            "imported_by": None,
+            "started_at": timestamp,
+            "completed_at": timestamp,
+            "created_at": timestamp,
+        },
+    )

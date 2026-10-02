@@ -1,129 +1,65 @@
-"""Unit tests for ingestion_service.py, mocking the Supabase REST layer so
-these run offline -- no network, no real Supabase project needed."""
-from datetime import datetime, timezone
+"""Import audit (ingestion_service.record_import): one in_data_imports row per
+distinct payload, recorded against a registered company, no secrets stored."""
+from datetime import datetime
 
 import pytest
 
-from app.models.domain import NormalizedSecurityAlert, RiskLevel
+from app.ingestion.service import AlarmBatch
+from app.models.domain import Company
 from app.services import ingestion_service
-from app.services import supabase_rest as db
 
 
-class _FakeTable:
-    """In-memory stand-in for one Supabase table, keyed by row 'id'."""
-
-    def __init__(self):
-        self.rows: list[dict] = []
-
-    def insert(self, data: dict) -> dict:
-        row = dict(data)
-        self.rows.append(row)
-        return row
-
-    def select(self, filters: dict) -> list[dict]:
-        return [r for r in self.rows if all(r.get(k) == v for k, v in (filters or {}).items())]
-
-
-class FakeSupabase:
-    def __init__(self):
-        self.tables: dict[str, _FakeTable] = {}
-
-    def _table(self, name: str) -> _FakeTable:
-        return self.tables.setdefault(name, _FakeTable())
-
-    async def select(self, table, filters=None, order=None, limit=None):
-        return self._table(table).select(filters or {})
-
-    async def insert(self, table, data):
-        return self._table(table).insert(data)
-
-
-@pytest.fixture
-def fake_supabase(monkeypatch):
-    fake = FakeSupabase()
-    monkeypatch.setattr(db, "select", fake.select)
-    monkeypatch.setattr(db, "insert", fake.insert)
-    return fake
-
-
-def _alert(client: str, alarm_number: str) -> NormalizedSecurityAlert:
-    now = datetime.now(timezone.utc)
-    return NormalizedSecurityAlert(
-        id=alarm_number,
-        alarm_number=alarm_number,
-        client=client,
-        alert_type="NG SIEM FALCON",
-        category="Test",
-        severity_score=80,
-        risk_level=RiskLevel.ALTO,
-        event_timestamp=now,
-        created_at=now,
-        reported_at=now,
-        description="test alert",
+def _batch(*, company_id="thomas-tgs-tps", content_hash="a" * 64, alerts=(), warnings=()) -> AlarmBatch:
+    return AlarmBatch(
+        company=Company(id=company_id, name="THOMAS TGS TPS"),
+        start=datetime(2026, 7, 1),
+        end=datetime(2026, 7, 31),
+        alerts=list(alerts),
+        warnings=list(warnings),
+        rows_received=len(alerts),
+        content_hash=content_hash,
+        request_url="https://source.test/detallado_alarmas.php?cliente=THOMAS+TGS-TPS",
     )
 
 
-class _FakeProvider:
-    def __init__(self, alerts, warnings=None):
-        self.alerts = alerts
-        self.ingestion_warnings = warnings or []
+async def test_first_import_creates_the_data_source_and_the_import_row(http_provider, fake_supabase):
+    # (http_provider first: it must keep the file-backed registry that knows TPS, not the fake table's)
+    company = await http_provider.get_company(name="THOMAS TGS TPS")
+    batch = await http_provider._acquisition.get_batch(company, datetime(2026, 7, 1), datetime(2026, 7, 31, 23, 59, 59))
+
+    row = await ingestion_service.record_import(batch)
+
+    sources = fake_supabase.table("in_data_sources").rows
+    assert len(sources) == 1
+    assert (sources[0]["company_id"], sources[0]["source_type"]) == ("thomas-tgs-tps", "api")
+    assert sources[0]["config"] == {}  # nothing about the server or its credentials is stored
+    assert row["status"] == "success" and row["row_count"] == 169 and row["warning_count"] == 0
+    assert row["file_hash"] == batch.content_hash
+    assert row["source_file_ref"].startswith("https://source.test/detallado_alarmas.php?")
 
 
-async def test_records_company_source_and_import_for_a_single_client(tmp_path, fake_supabase):
-    excel_path = tmp_path / "alarmas.xlsx"
-    excel_path.write_bytes(b"fake excel bytes")
-    provider = _FakeProvider([_alert("ACME", "A-1"), _alert("ACME", "A-2")])
+async def test_identical_payloads_are_not_recorded_twice(fake_supabase):
+    first = await ingestion_service.record_import(_batch())
+    again = await ingestion_service.record_import(_batch())
 
-    created = await ingestion_service.record_excel_import(provider, excel_path)
-
-    assert len(created) == 1
-    assert fake_supabase.tables["in_companies"].rows[0]["id"] == "acme"
-    assert fake_supabase.tables["in_data_sources"].rows[0]["company_id"] == "acme"
-    import_row = fake_supabase.tables["in_data_imports"].rows[0]
-    assert import_row["row_count"] == 2
-    assert import_row["status"] == "success"
-    assert import_row["company_id"] == "acme"
+    assert again["id"] == first["id"]
+    assert len(fake_supabase.table("in_data_imports").rows) == 1
+    assert len(fake_supabase.table("in_data_sources").rows) == 1
 
 
-async def test_records_one_import_per_distinct_client(tmp_path, fake_supabase):
-    excel_path = tmp_path / "alarmas.xlsx"
-    excel_path.write_bytes(b"fake excel bytes")
-    provider = _FakeProvider([_alert("ACME", "A-1"), _alert("OTHER CO", "B-1")])
+async def test_a_changed_payload_is_a_new_import_on_the_same_data_source(fake_supabase):
+    await ingestion_service.record_import(_batch(content_hash="a" * 64))
+    await ingestion_service.record_import(_batch(content_hash="b" * 64))
 
-    created = await ingestion_service.record_excel_import(provider, excel_path)
-
-    assert len(created) == 2
-    company_ids = {row["company_id"] for row in fake_supabase.tables["in_data_imports"].rows}
-    assert company_ids == {"acme", "other-co"}
+    assert len(fake_supabase.table("in_data_imports").rows) == 2
+    assert len(fake_supabase.table("in_data_sources").rows) == 1
 
 
-async def test_reimporting_identical_file_does_not_duplicate_import_row(tmp_path, fake_supabase):
-    excel_path = tmp_path / "alarmas.xlsx"
-    excel_path.write_bytes(b"same bytes every time")
-    provider = _FakeProvider([_alert("ACME", "A-1")])
-
-    first = await ingestion_service.record_excel_import(provider, excel_path)
-    second = await ingestion_service.record_excel_import(provider, excel_path)
-
-    assert len(fake_supabase.tables["in_data_imports"].rows) == 1
-    assert first[0]["id"] == second[0]["id"]
-
-
-async def test_status_reflects_warnings(tmp_path, fake_supabase):
-    excel_path = tmp_path / "alarmas.xlsx"
-    excel_path.write_bytes(b"bytes")
-    provider = _FakeProvider([_alert("ACME", "A-1")], warnings=["row 3: missing 'tipo'"])
-
-    created = await ingestion_service.record_excel_import(provider, excel_path)
-
-    assert created[0]["status"] == "partial"
-    assert created[0]["warning_count"] == 1
-
-
-async def test_no_alerts_and_warnings_means_failed_status():
-    # A sheet with a missing required column yields zero alerts and one warning --
-    # nothing to associate with a company, so nothing is persisted, but the
-    # status-derivation logic itself (exercised indirectly via record_excel_import
-    # when alerts_by_client is empty) should not raise.
-    provider = _FakeProvider([], warnings=["Sheet 'Alarmas': missing required column(s): cliente"])
-    assert provider.alerts == []
+@pytest.mark.parametrize(
+    "alerts, warnings, expected",
+    [([], ["sin datos"], "failed"), (["x"], ["algo"], "partial"), (["x"], [], "success")],
+)
+async def test_status_reflects_warnings(fake_supabase, alerts, warnings, expected):
+    row = await ingestion_service.record_import(_batch(alerts=alerts, warnings=warnings))
+    assert row["status"] == expected
+    assert row["warnings"] == warnings

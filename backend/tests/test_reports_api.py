@@ -17,7 +17,7 @@ def test_unauthenticated_request_is_rejected(api_client):
 def test_companies_and_templates_are_listed(api_client):
     headers = auth_headers(api_client)
     companies = api_client.get("/api/companies", headers=headers).json()
-    assert {"id": "acme-corp", "name": "ACME Corp"} in companies
+    assert any(c["id"] == "acme-corp" and c["name"] == "ACME Corp" for c in companies)
 
     templates = api_client.get("/api/report-templates", headers=headers).json()
     assert any(t["key"] == "csoc_mensual" for t in templates)

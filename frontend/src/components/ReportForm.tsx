@@ -41,6 +41,7 @@ export function ReportForm() {
   const [categoriesText, setCategoriesText] = useState("");
   const [riskLevels, setRiskLevels] = useState<string[]>([]);
   const [format, setFormat] = useState("docx");
+  const selectedCompany = companies.find((c) => c.id === companyId);
   const dateError =
     startDate && endDate && startDate > endDate
       ? "La fecha inicial debe ser anterior o igual a la fecha final."
@@ -70,7 +71,7 @@ export function ReportForm() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const company = companies.find((c) => c.id === companyId);
+    const company = selectedCompany;
     if (!company || !startDate || !endDate || dateError) return;
 
     setIsSubmitting(true);
@@ -139,6 +140,11 @@ export function ReportForm() {
                   </option>
                 ))}
               </select>
+              {selectedCompany?.consecutivo && (
+                <span className="mt-1 block text-xs text-slate-400">
+                  Serie de alarmas: {selectedCompany.consecutivo}
+                </span>
+              )}
             </label>
 
             <label className={labelClass}>

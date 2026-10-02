@@ -14,7 +14,7 @@ data doesn't actually support.
 
 It runs the real production code (`collect_data` + `generate_narrative` —
 the exact same function the app calls, not a re-typed copy) against the real
-THOMAS TGS-TPS Excel data, under a few different filters, and scores each
+THOMAS TGS-TPS alarms delivered by the configured data source, under a few different filters, and scores each
 resulting narrative's groundedness against the exact DATA JSON the model was
 shown — using Claude (`claude-haiku-4-5`) as the judge via TruLens's
 Anthropic provider.
@@ -37,7 +37,8 @@ python evals/trulens_groundedness_eval.py --dashboard # also opens the TruLens S
 ```
 
 Needs `ANTHROPIC_API_KEY` in `backend/.env` (same file the app uses) and
-`DATA_PROVIDER=excel` (the default) so it runs against the real client data.
+`DATA_PROVIDER=http` (the default) with the `SOURCE_*` credentials in the same file, run from a
+machine that can reach the data source (VPN/LAN), so it evaluates the real client data.
 
 ### What it checks
 

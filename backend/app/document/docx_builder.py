@@ -13,6 +13,7 @@ everywhere per user feedback after seeing it in real generated reports
 (cover title, section/subsection number badges, summary paragraphs).
 """
 import io
+import re
 from pathlib import Path
 
 import matplotlib
@@ -33,7 +34,23 @@ from app.schemas.report_spec import (
 )
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-LOGO_PATH = ASSETS_DIR / "invotecsa_logo.png"
+LOGOS_DIR = ASSETS_DIR / "logos"
+DEFAULT_LOGO_PATH = ASSETS_DIR / "invotecsa_logo.png"
+_LOGO_EXTENSIONS = (".png", ".jpg", ".jpeg")
+
+
+def resolve_logo_path(logo_key: str | None) -> Path | None:
+    """Logo file for a company: assets/logos/<slug of the logo key>.png|jpg|jpeg
+    (e.g. "Thomas TPS" -> logos/thomas-tps.png), falling back to the default
+    logo when that company's file has not been supplied yet. The slug keeps only
+    [a-z0-9-], so a logo key can never point outside the logos directory."""
+    if logo_key:
+        slug = re.sub(r"[^a-z0-9]+", "-", logo_key.lower()).strip("-")
+        for extension in _LOGO_EXTENSIONS:
+            candidate = LOGOS_DIR / f"{slug}{extension}"
+            if slug and candidate.is_file():
+                return candidate
+    return DEFAULT_LOGO_PATH if DEFAULT_LOGO_PATH.exists() else None
 
 DARK_GREEN = RGBColor(0x00, 0x53, 0x2A)
 LIGHT_GREEN = "E2EFD9"
@@ -81,7 +98,7 @@ def _style_document(document: Document) -> None:
     h2.font.size = Pt(13)
 
 
-def _add_page_header(document: Document) -> None:
+def _add_page_header(document: Document, logo_path: Path | None) -> None:
     header = document.sections[0].header
     header.is_linked_to_previous = False
     table = header.add_table(rows=1, cols=2, width=Inches(6.5))
@@ -90,10 +107,10 @@ def _add_page_header(document: Document) -> None:
     for cell in (left_cell, right_cell):
         _shade_cell(cell, GRAY_BAND)
 
-    if LOGO_PATH.exists():
+    if logo_path:
         p = left_cell.paragraphs[0]
         run = p.add_run()
-        run.add_picture(str(LOGO_PATH), height=Inches(0.35))
+        run.add_picture(str(logo_path), height=Inches(0.35))
 
     right_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
     run = right_cell.paragraphs[0].add_run("Informe de Gestión SOC")
@@ -323,11 +340,11 @@ def _render_section(document: Document, section: Section) -> None:
         _render_subsection(document, sub)
 
 
-def _add_cover(document: Document, spec: ReportSpecification) -> None:
-    if LOGO_PATH.exists():
+def _add_cover(document: Document, spec: ReportSpecification, logo_path: Path | None) -> None:
+    if logo_path:
         logo_p = document.add_paragraph()
         run = logo_p.add_run()
-        run.add_picture(str(LOGO_PATH), height=Inches(0.6))
+        run.add_picture(str(logo_path), height=Inches(0.6))
 
     badge = document.add_paragraph()
     badge_run = badge.add_run(spec.document_control.clasificacion)
@@ -396,11 +413,12 @@ def _add_document_control(document: Document, spec: ReportSpecification) -> None
 
 def build_document(spec: ReportSpecification, output_path: Path) -> Path:
     document = Document()
+    logo_path = resolve_logo_path(spec.company_logo)
     _style_document(document)
-    _add_page_header(document)
+    _add_page_header(document, logo_path)
     _add_page_footer(document, spec)
 
-    _add_cover(document, spec)
+    _add_cover(document, spec, logo_path)
     _add_document_control(document, spec)
 
     document.add_heading("Tabla de Contenido", level=1)

@@ -54,6 +54,8 @@ export interface ChatMessage {
 export interface Company {
   id: string;
   name: string;
+  logo_key?: string | null;
+  consecutivo?: string | null;
 }
 
 export interface ReportTemplate {

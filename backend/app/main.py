@@ -8,10 +8,9 @@ from app import auth
 from app.agents.graph import get_compiled_graph
 from app.api import conversations, health, reference_data, reports
 from app.config.settings import get_settings
-from app.providers.excel import ExcelDataProvider
+from app.ingestion.config import SourceConfig
 from app.providers.factory import get_data_provider
 from app.services.conversation_service import ConversationService
-from app.services.ingestion_service import record_excel_import
 
 logger = logging.getLogger(__name__)
 
@@ -44,26 +43,46 @@ def _check_production_security(settings) -> None:
         )
 
 
+def _check_data_source(settings) -> None:
+    """Report an unusable alarm-source configuration at startup, loudly but without
+    refusing to start (the operator can still log in and fix it; every report
+    attempt also fails with the same explicit message)."""
+    if settings.data_provider != "http":
+        return
+    config = SourceConfig.from_settings(settings)
+    problems = config.problems()
+    if problems:
+        logger.error("Fuente de datos HTTP sin configurar en backend/.env: %s", "; ".join(problems))
+        return
+    logger.info(
+        "Fuente de datos: %s (usuario configurado, TLS %s)",
+        config.host,
+        "verificado" if config.tls_verify else "SIN verificar",
+    )
+    if settings.environment == "production":
+        if not config.uses_https:
+            logger.warning("SECURITY: SOURCE_BASE_URL usa http:// -- las credenciales Basic Auth viajarían sin cifrar.")
+        if not config.tls_verify:
+            logger.warning("SECURITY: SOURCE_VERIFY_TLS=false en producción -- la identidad del servidor no se verifica.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     _check_production_security(settings)
+    _check_data_source(settings)
 
     graph, saver_ctx = await get_compiled_graph(str(settings.sqlite_checkpoint_db_path))
     app.state.conversation_service = ConversationService(graph)
-
-    if settings.data_provider == "excel":
-        provider = get_data_provider()
-        if isinstance(provider, ExcelDataProvider):
-            try:
-                await record_excel_import(provider, settings.excel_data_path)
-            except Exception:  # noqa: BLE001 - import audit trail is best-effort, never blocks startup
-                logger.warning("Could not record Excel import metadata in Supabase", exc_info=True)
 
     try:
         yield
     finally:
         await saver_ctx.__aexit__(None, None, None)
+        if get_data_provider.cache_info().currsize:
+            provider = get_data_provider()
+            if hasattr(provider, "aclose"):
+                await provider.aclose()
 
 
 def create_app() -> FastAPI:

@@ -127,3 +127,28 @@ instrucciones vía datos. Todo lo demás queda documentado con severidad y plan 
 implementado, siguiendo la instrucción explícita de esta fase de corregir solo lo priorizado y
 seguro. Quedo a la espera de tu aprobación para iniciar la Fase 10 (integración final y
 documentación).
+
+
+---
+
+## Addendum (octubre 2026): credenciales de la fuente de datos
+
+Con la fuente HTTP aparecen credenciales de un sistema externo. Reglas aplicadas:
+
+- **Solo variables de entorno** (`SOURCE_USERNAME`/`SOURCE_PASSWORD` en `backend/.env`, ya en
+  `.gitignore`; compose las toma del entorno). Ni en código, ni en Supabase (`in_data_sources.config`
+  queda en `{}`), ni en `.env.example` (placeholders), ni en las URLs (van en el header
+  `Authorization`, nunca en la query).
+- **No se filtran**: la contraseña es `SecretStr` (no aparece en `repr(Settings)`), `SourceConfig`
+  la excluye de su `repr`, los logs solo llevan host/estado/tiempos, y los mensajes de error nombran la
+  *variable* a revisar, no su valor (pruebas en `tests/test_source_client.py` y
+  `tests/test_source_startup_check.py`).
+- **TLS verificado por defecto** (`SOURCE_VERIFY_TLS=true`); para un servidor interno se prefiere
+  `SOURCE_CA_BUNDLE` a desactivar la verificación. En `ENVIRONMENT=production` el arranque advierte si
+  la URL es `http://` (Basic Auth viajaría en claro) o la verificación TLS está apagada.
+- **Sin bucles de autenticación**: un 401 se reintenta una sola vez y solo si antes funcionó, para no
+  bloquear la cuenta de servicio contra un servidor con política de intentos fallidos.
+- **Empresa acotada por request**: el valor de `cliente=` sale del registro (nunca de texto libre
+  del usuario o del LLM) y se codifica como parámetro; las filas de otras empresas se descartan.
+- **Pendiente recomendado**: usar una cuenta de servicio de solo lectura dedicada a este sistema y
+  rotar la contraseña que se compartió por chat durante el desarrollo.

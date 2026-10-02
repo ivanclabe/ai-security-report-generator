@@ -5,7 +5,7 @@ is a typed, validated field and every tool delegates to the DataProvider
 abstraction. Analytics that don't need a dedicated provider method (MITRE
 breakdown, response-rate) are computed here, generically, from whatever
 list[NormalizedSecurityAlert] the provider returns -- so they work
-identically against mock or Excel-sourced data.
+identically against mock or HTTP-sourced data.
 """
 from datetime import datetime
 

@@ -2,7 +2,7 @@
 
 Everything the agent knows about a client's security posture flows through
 this interface, always as NormalizedSecurityAlert. Swapping the source --
-synthetic mock data, a client's Excel export, a future REST API/database --
+synthetic mock data, the remote alarm source (HTTP), a future database --
 requires no changes to tools or the agent, only a different DataProvider
 implementation returning the same normalized shape.
 """

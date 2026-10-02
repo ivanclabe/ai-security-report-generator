@@ -16,7 +16,6 @@ COPY backend/app ./app
 COPY data /data
 
 ENV MOCK_DATA_PATH=/data/mock_security_data.json \
-    EXCEL_DATA_PATH=/data/thomas_tgs_tps_alarmas_julio.xlsx \
     MITRE_TACTICS_PATH=/data/mitre_tactics.json
 
 EXPOSE 8000

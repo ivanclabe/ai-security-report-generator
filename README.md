@@ -13,7 +13,8 @@ incident, or security posture.
 ## Qué hace la app
 
 - **Genera informes de gestión CSOC** para una empresa y período dados, a partir de datos reales
-  de alarmas (Excel del cliente o dataset mock), en formato **Word (.docx) o PDF**.
+  de alarmas entregados por la fuente de datos del cliente (o un dataset mock para demos), en formato
+  **Word (.docx) o PDF**.
 - **Dos modalidades de uso**, ambas ejecutando exactamente la misma lógica interna
   (`app/services/report/*`) — ver "Flujo determinístico" y "Flujo conversacional" abajo.
 - **Responde preguntas puntuales sobre los datos** ("¿cuáles son las alarmas críticas?", "¿cómo
@@ -27,15 +28,16 @@ incident, or security posture.
 ## Arquitectura
 
 Monolito modular: un backend FastAPI ejecuta un agente LangGraph (un único `StateGraph`, sin
-supervisor/subagentes) detrás de una abstracción `DataProvider` (`ExcelDataProvider` por
-defecto, `MockDataProvider` como alternativa sintética, un proveedor de API/DB real más
-adelante — ninguno de los dos toca el agente ni las tools), y un frontend React lo consume vía
-REST + SSE.
+supervisor/subagentes) detrás de una abstracción `DataProvider` (`HttpSourceDataProvider` por
+defecto, `MockDataProvider` como alternativa sintética — ninguno de los dos toca el agente ni
+las tools), y un frontend React lo consume vía REST + SSE. Entre la fuente remota y el
+`DataProvider` hay una capa de adquisición aislada del agente (`backend/app/ingestion/`).
 
 ```
 frontend/   React + TypeScript + Vite + Tailwind + Zustand -- chat UI y formulario
-backend/    FastAPI + LangGraph agent + tools + providers (excel/mock/api) + python-docx builder
-data/       thomas_tgs_tps_alarmas_julio.xlsx (fuente por defecto), mitre_tactics.json (catálogo
+backend/    FastAPI + LangGraph agent + tools + providers (http/mock) + ingestion (fuente remota)
+            + python-docx builder
+data/       companies.json (lista oficial de empresas del cliente), mitre_tactics.json (catálogo
             estático MITRE ATT&CK), mock_security_data.json (+ scripts/generate_mock_data.py)
 ```
 
@@ -55,20 +57,42 @@ Ambas modalidades (formulario y chat) comparten la misma capa de servicios
 la invoca desde los nodos del grafo LangGraph. Ver `DETERMINISTIC_FLOW.md`,
 `AGENT_ARCHITECTURE.md` y `REPORT_GENERATION_ARCHITECTURE.md` para el detalle de cada uno.
 
-### Data providers
+### Fuente de datos (`DATA_PROVIDER=http`) y capa de adquisición
 
-- **`excel` (default)** — `ExcelDataProvider` normaliza el export "Alarmas" del cliente en
-  registros `NormalizedSecurityAlert` (`backend/app/providers/excel_ingestion.py`). Maneja las
-  particularidades reales del formato: severidad como score 1-100 (o el string `"ANULADO"` para
-  alarmas anuladas), nivel de riesgo (`Critico`/`Alto`/`Medio`/`Bajo`) derivado de ese score con
-  los umbrales propios del cliente, campos IP/hostname que pueden traer múltiples valores, y
-  artefactos `_x000D_` de Excel en campos de texto libre.
-- **`mock`** — `MockDataProvider`, completamente sintético, sin dependencia de archivo externo
-  más allá del JSON generado. Útil para demos/tests independientes del archivo del cliente.
-- **`api` (placeholder)** — `ApiDataProvider` implementa el contrato `DataProvider` con
-  `NotImplementedError` explícitos; existe para dejar el punto de extensión concreto en código
-  cuando el cliente exponga una API real (ver "Incorporación de nuevas fuentes" abajo).
-- Selección vía `DATA_PROVIDER=excel|mock` en `backend/.env`.
+Las alarmas se piden directamente a la fuente del cliente por HTTPS con **Basic Auth**. Todo lo
+que cambia entre ambientes vive en `backend/.env` (nunca en el código ni en la base de datos):
+
+```
+SOURCE_BASE_URL=https://192.168.80.50     # cambiar la IP = editar esta línea y reiniciar
+SOURCE_USERNAME=...  SOURCE_PASSWORD=...  # solo variables de entorno
+SOURCE_VERIFY_TLS=true                    # o SOURCE_CA_BUNDLE=/ruta/ca-interna.pem
+```
+
+`backend/app/ingestion/` es una capa **separada del agente** (nada en `app/agents` ni
+`app/services/report` la importa): `config.py` (SOURCE_* → `SourceConfig`), `requests.py`
+(construye las URLs de alarmas/indicadores), `client.py` (Basic Auth, sesión reutilizable y
+renovación si expira, errores accionables), `csv_decoder.py` (bytes → tabla; detecta HTML con
+HTTP 200), `normalizer.py` (filas → `NormalizedSecurityAlert`) y `service.py` (pide, valida que las
+filas sean de la empresa pedida, y cachea por empresa/período). `HttpSourceDataProvider` solo adapta
+eso al contrato `DataProvider`. Ver `INGESTION_ARCHITECTURE.md` (§8) para el detalle.
+
+- **`mock`** — `MockDataProvider`, completamente sintético, sin servidor ni credenciales. Útil
+  para demos/tests (`DATA_PROVIDER=mock`).
+- El proveedor Excel y el placeholder `api` fueron **eliminados**; seleccionarlos da un error
+  explícito que pide usar `DATA_PROVIDER=http`.
+- **Verificar la conexión** (desde una máquina con acceso a la fuente/VPN):
+  `cd backend && python scripts/probe_sources.py --company "THOMAS TGS TPS" --indicators` — prueba
+  las variantes de `cliente=`, muestra columnas/estadísticas y nunca imprime credenciales.
+
+### Empresas (registro central)
+
+La lista oficial del cliente (18 empresas: *Nombre empresa informe*, *Logo*, *Consecutivo
+Albatroz*) vive en `data/companies.json` y se carga a la tabla `in_companies` de Supabase con
+`cd backend && python scripts/seed_companies.py` (idempotente). En runtime la fuente de verdad es la
+tabla (`app/services/company_registry.py`): de ahí salen el selector del formulario, los nombres
+en la app y en el informe, el valor de `cliente=` de cada request (`source_client`, o el nombre si
+está vacío) y el logo (`logo_key` → `backend/app/document/assets/logos/`, ver su README). Un texto
+que coincide con varias empresas (p. ej. "peru") **no se adivina**: se pide elegir entre las opciones.
 
 ### Autenticación y almacenamiento de conversaciones
 
@@ -117,8 +141,13 @@ Copiar `backend/.env.example` a `backend/.env` y completar:
 |---|---|
 | `ANTHROPIC_API_KEY` | API key de Anthropic (requerida) |
 | `LLM_MODEL` | Modelo Claude a usar (default `claude-sonnet-5`) |
-| `DATA_PROVIDER` | `excel` (default) o `mock` |
-| `EXCEL_DATA_PATH` / `MOCK_DATA_PATH` / `MITRE_TACTICS_PATH` | Overrides de ruta; por defecto apuntan a `data/` en la raíz del proyecto |
+| `DATA_PROVIDER` | `http` (default, fuente remota) o `mock` |
+| `SOURCE_BASE_URL` | Dirección de la fuente, p. ej. `https://192.168.80.50` — **único lugar** donde cambia la IP |
+| `SOURCE_USERNAME` / `SOURCE_PASSWORD` | Credenciales Basic Auth de la fuente (solo entorno; nunca versionar `.env`) |
+| `SOURCE_VERIFY_TLS` / `SOURCE_CA_BUNDLE` | Verificación TLS (default `true`); CA propia vía `SOURCE_CA_BUNDLE` |
+| `SOURCE_ALARMS_PATH` / `SOURCE_INDICATORS_PATH` | Rutas de los endpoints (defaults `/detallado_alarmas.php`, `/indicadores.php`) |
+| `SOURCE_TIMEOUT_SECONDS` / `SOURCE_ALARMS_LIMIT` / `SOURCE_CACHE_TTL_SECONDS` | Timeout (30), `limite=` por request (1000) y vigencia del caché (300 s) |
+| `MOCK_DATA_PATH` / `MITRE_TACTICS_PATH` | Overrides de ruta; por defecto apuntan a `data/` en la raíz del proyecto |
 | `CORS_ORIGINS` | Lista JSON de orígenes permitidos (default `["http://localhost:5173"]`) |
 | `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Proyecto Supabase para conversaciones/informes |
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | Credencial única de operador |
@@ -168,6 +197,9 @@ npm run dev
    backend, nunca se expone al cliente, y queda deliberadamente acotada a las tablas `in_*`).
 4. Copiar la URL del proyecto y la anon key a `SUPABASE_URL` / `SUPABASE_ANON_KEY` en
    `backend/.env`.
+5. Cargar la lista de empresas del cliente: `cd backend && python scripts/seed_companies.py`
+   (requiere las columnas `logo_key`, `consecutivo`, `source_client`, `is_active`, `updated_at` de
+   `in_companies`, ya incluidas en `supabase_schema.sql`).
 
 El checkpointer de LangGraph (estado conversacional del agente) **no** vive en Supabase — usa su
 propio SQLite local y no requiere configuración adicional.
@@ -222,14 +254,15 @@ ese turno; si el modelo cita algo no verificado, la cita se descarta antes de mo
 
 Toda fuente de datos implementa el contrato `DataProvider` (`backend/app/providers/base.py`) —
 ni el agente ni las tools conocen el origen concreto de los datos. Para agregar una fuente
-nueva (p. ej. una API real del cliente, hoy un placeholder en `app/providers/api.py`):
+nueva (p. ej. otra API del cliente):
 
 1. Implementar cada método de `DataProvider` mapeando la fuente a los modelos de dominio
    (`app/models/domain.py`: `NormalizedSecurityAlert`, `Company`, etc.), aplicando el mismo rigor
-   de validación que `excel_ingestion.py` (campos requeridos, fechas, duplicados).
-2. Reusar `ingestion_service.py` para registrar metadata de importación (`data_source_id`, hash/
-   marca de sincronización, warnings) — su contrato ya es agnóstico de si el origen fue un
-   archivo o una respuesta HTTP.
+   de validación que `app/ingestion/normalizer.py` (campos requeridos, fechas, duplicados). Si la
+   nueva fuente entrega las mismas columnas, basta un nuevo decodificador (bytes → tabla) y
+   reutilizar `normalize_alarm_rows`; las empresas siempre salen del registro.
+2. Reusar `ingestion_service.record_import` (listener `on_fetch` del servicio de adquisición) para
+   registrar metadata de importación (`data_source_id`, hash del payload, warnings).
 3. Registrar el nuevo proveedor detrás de `DATA_PROVIDER` en `settings.py` y
    `app/providers/factory.py` (o el punto de selección equivalente).
 

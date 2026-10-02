@@ -8,8 +8,9 @@ PROJECT_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 REAL_MOCK_DATA_PATH = PROJECT_ROOT / "data" / "mock_security_data.json"
-REAL_EXCEL_PATH = PROJECT_ROOT / "data" / "thomas_tgs_tps_alarmas_julio.xlsx"
+ALARMS_FIXTURE_PATH = BACKEND_DIR / "tests" / "fixtures" / "alarmas_tps_julio.csv"
 MITRE_CATALOG_PATH = PROJECT_ROOT / "data" / "mitre_tactics.json"
+COMPANIES_FILE_PATH = PROJECT_ROOT / "data" / "companies.json"
 
 
 @pytest.fixture(autouse=True)
@@ -17,16 +18,16 @@ def isolated_settings(tmp_path, monkeypatch):
     """Point every path-based setting at a throwaway location per test.
 
     Defaults the test env to the mock provider even though the app's own
-    default is now "excel" -- tests that want ExcelDataProvider construct it
-    directly (see the excel_provider fixture) rather than relying on the
-    global default, so they stay unaffected if that default ever changes.
+    default is "http" -- tests that want the HTTP source construct it directly
+    (see the http_provider fixture, which serves the CSV fixture through an
+    in-memory transport) rather than relying on the global default, so no test
+    ever tries to reach a real server.
     """
     from app.config.settings import get_settings
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("DATA_PROVIDER", "mock")
     monkeypatch.setenv("MOCK_DATA_PATH", str(REAL_MOCK_DATA_PATH))
-    monkeypatch.setenv("EXCEL_DATA_PATH", str(REAL_EXCEL_PATH))
     monkeypatch.setenv("MITRE_TACTICS_PATH", str(MITRE_CATALOG_PATH))
     monkeypatch.setenv("SQLITE_APP_DB_PATH", str(tmp_path / "app.sqlite3"))
     monkeypatch.setenv("SQLITE_CHECKPOINT_DB_PATH", str(tmp_path / "checkpoints.sqlite3"))
@@ -45,10 +46,41 @@ def mock_provider():
 
 
 @pytest.fixture
-def excel_provider():
-    from app.providers.excel import ExcelDataProvider
+def source_server():
+    """In-memory stand-in for the alarm source: serves the CSV fixture for the
+    company it is asked for, enforces Basic Auth, and records every request."""
+    from tests.source_fakes import FakeSourceServer
 
-    return ExcelDataProvider(REAL_EXCEL_PATH, MITRE_CATALOG_PATH)
+    return FakeSourceServer(ALARMS_FIXTURE_PATH.read_bytes())
+
+
+@pytest.fixture
+def http_provider(source_server):
+    from app.providers.http_source import HttpSourceDataProvider
+    from app.services.company_registry import get_company_registry
+    from tests.source_fakes import build_acquisition
+
+    return HttpSourceDataProvider(build_acquisition(source_server), get_company_registry())
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_company_registry():
+    """The company registry normally reads Supabase (in_companies). Tests get one
+    backed by the repo's official list (data/companies.json) so no test depends
+    on the network or on whatever is currently in the real table. Tests that
+    exercise the Supabase loader use the fake_supabase fixture below."""
+    from app.services.company_registry import (
+        CompanyRegistry,
+        load_companies_from_file,
+        set_company_registry,
+    )
+
+    async def _from_file():
+        return load_companies_from_file(COMPANIES_FILE_PATH)
+
+    set_company_registry(CompanyRegistry(_from_file))
+    yield
+    set_company_registry(None)
 
 
 @pytest.fixture(autouse=True)
@@ -142,9 +174,15 @@ def fake_supabase(monkeypatch, isolated_settings):
     HTTP-level tests use this instead of real network calls. Pre-seeds the
     reference-data tables the deterministic-flow selectors read from."""
     from app.services import supabase_rest as db
+    from app.services.company_registry import (
+        CompanyRegistry,
+        load_companies_from_supabase,
+        set_company_registry,
+    )
 
     fake = FakeSupabase()
-    fake.table("in_companies").insert({"id": "acme-corp", "name": "ACME Corp"})
+    fake.table("in_companies").insert({"id": "acme-corp", "name": "ACME Corp", "is_active": True})
+    set_company_registry(CompanyRegistry(load_companies_from_supabase))
     fake.table("in_report_templates").insert(
         {"key": "csoc_mensual", "name": "Informe de Gestión CSOC Mensual", "description": "...", "is_active": True}
     )

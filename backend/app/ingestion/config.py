@@ -1,0 +1,83 @@
+"""Connection settings of the alarm data source, built from app Settings.
+
+Centralizes everything that varies between environments -- address, paths,
+credentials, TLS policy, limits -- so the rest of the acquisition layer never
+reads environment variables or hardcodes a URL. Changing the server's IP is a
+change to SOURCE_BASE_URL in backend/.env and a restart.
+"""
+from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from app.ingestion.errors import SourceConfigError
+
+
+@dataclass(frozen=True)
+class SourceConfig:
+    base_url: str
+    alarms_path: str = "/detallado_alarmas.php"
+    indicators_path: str = "/indicadores.php"
+    username: str = ""
+    password: str = field(default="", repr=False)  # never printed, not even in debug logs
+    verify_tls: bool = True
+    ca_bundle: str = ""
+    timeout_seconds: float = 30.0
+    alarms_limit: int = 1000
+    cache_ttl_seconds: int = 300
+
+    @classmethod
+    def from_settings(cls, settings) -> "SourceConfig":
+        return cls(
+            base_url=settings.source_base_url.strip(),
+            alarms_path=settings.source_alarms_path,
+            indicators_path=settings.source_indicators_path,
+            username=settings.source_username,
+            password=settings.source_password.get_secret_value(),
+            verify_tls=settings.source_verify_tls,
+            ca_bundle=settings.source_ca_bundle.strip(),
+            timeout_seconds=settings.source_timeout_seconds,
+            alarms_limit=settings.source_alarms_limit,
+            cache_ttl_seconds=settings.source_cache_ttl_seconds,
+        )
+
+    @property
+    def tls_verify(self) -> bool | str:
+        """Value for httpx's `verify=`: a CA bundle path, or on/off."""
+        return self.ca_bundle or self.verify_tls
+
+    @property
+    def host(self) -> str:
+        return urlsplit(self.base_url).netloc
+
+    @property
+    def uses_https(self) -> bool:
+        return urlsplit(self.base_url).scheme == "https"
+
+    def url_for(self, path: str) -> str:
+        return self.base_url.rstrip("/") + "/" + path.lstrip("/")
+
+    def problems(self) -> list[str]:
+        """Human-readable list of what is missing/invalid, naming the env vars."""
+        problems: list[str] = []
+        if not self.base_url:
+            problems.append("falta SOURCE_BASE_URL (p. ej. https://192.168.80.50)")
+        else:
+            parts = urlsplit(self.base_url)
+            if parts.scheme not in ("http", "https") or not parts.netloc:
+                problems.append("SOURCE_BASE_URL debe ser una URL http(s) con host, p. ej. https://192.168.80.50")
+        if not self.username:
+            problems.append("falta SOURCE_USERNAME")
+        if not self.password:
+            problems.append("falta SOURCE_PASSWORD")
+        if self.ca_bundle and not Path(self.ca_bundle).is_file():
+            problems.append("SOURCE_CA_BUNDLE no apunta a un archivo existente")
+        if self.alarms_limit < 1:
+            problems.append("SOURCE_ALARMS_LIMIT debe ser mayor que 0")
+        return problems
+
+    def validate(self) -> None:
+        problems = self.problems()
+        if problems:
+            raise SourceConfigError(
+                "La fuente de datos no está configurada en backend/.env: " + "; ".join(problems) + "."
+            )

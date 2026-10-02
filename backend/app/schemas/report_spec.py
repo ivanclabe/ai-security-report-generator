@@ -80,6 +80,7 @@ class Section(BaseModel):
 class ReportSpecification(BaseModel):
     document_control: DocumentControl
     company: str
+    company_logo: str | None = None  # registry logo key (see docx_builder.resolve_logo_path)
     period: ReportPeriod
     objective: str
     services: list[str] = Field(default_factory=list)

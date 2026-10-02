@@ -22,13 +22,21 @@
 -- Nivel 0: entidades sin dependencias
 -- ----------------------------------------------------------------------------
 
+-- Registro central de empresas (lista oficial del cliente, ver data/companies.json).
 create table if not exists in_companies (
-    id text primary key,                       -- slug, ej. "thomas-tgs-tps" (igual convención que _slugify() en excel.py)
-    name text not null,
+    id text primary key,                       -- slug del nombre, ej. "thomas-tgs-tps" (app/services/company_registry.py::company_slug)
+    name text not null,                        -- "Nombre empresa informe": se muestra en la app y en el informe
     industry text,
     country text,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    logo_key text,                             -- "Logo": clave del logo para el informe
+    consecutivo text,                          -- "Consecutivo Albatroz": serie de numeración de alarmas
+    source_client text,                        -- valor de cliente= en los requests a la fuente (null => name)
+    is_active boolean not null default true,
+    updated_at timestamptz not null default now()
 );
+create unique index if not exists in_companies_consecutivo_uidx
+    on in_companies (consecutivo) where consecutivo is not null;
 
 create table if not exists in_users (
     id text primary key,

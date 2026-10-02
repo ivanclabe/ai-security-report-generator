@@ -2,7 +2,7 @@
 
 NormalizedSecurityAlert is the canonical shape every DataProvider returns,
 whether the underlying source is the synthetic mock dataset or a real
-client's alarm export (Excel today, an API in production). Severity is a
+client's alarm export (delivered by the remote alarm source over HTTP). Severity is a
 1-100 score (matching the source business's own scale); RiskLevel is the
 categorical tier derived from it via `risk_level_from_score`, mirroring the
 client's own published thresholds (see data/mitre_tactics.json's sibling,
@@ -56,8 +56,18 @@ class NotificationStatus(StrEnum):
 class Company(BaseModel):
     id: str
     name: str
-    industry: str
-    country: str
+    industry: str = "No especificado"
+    country: str = "No especificado"
+    # Fields of the client's official company list (data/companies.json,
+    # persisted in in_companies) -- see app/services/company_registry.py.
+    logo_key: str | None = None
+    consecutivo: str | None = None
+    source_client: str | None = None
+
+    @property
+    def request_client_name(self) -> str:
+        """Value sent as `cliente=` to the data source."""
+        return self.source_client or self.name
 
 
 class Notification(BaseModel):

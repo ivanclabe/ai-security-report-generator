@@ -6,17 +6,21 @@ from fastapi import APIRouter, Depends
 
 from app.auth import require_auth
 from app.schemas.api import CompanyOut, ReportTemplateOut
-from app.services.repositories import CompanyRepository, ReportTemplateRepository
+from app.services.company_registry import get_company_registry
+from app.services.repositories import ReportTemplateRepository
 
 router = APIRouter(prefix="/api", tags=["reference-data"], dependencies=[Depends(require_auth)])
 
-_companies = CompanyRepository()
 _templates = ReportTemplateRepository()
 
 
 @router.get("/companies", response_model=list[CompanyOut])
 async def list_companies():
-    return await _companies.list_all()
+    """The client's official company list (company registry, in_companies)."""
+    companies = await get_company_registry().list_active()
+    return [
+        {"id": c.id, "name": c.name, "logo_key": c.logo_key, "consecutivo": c.consecutivo} for c in companies
+    ]
 
 
 @router.get("/report-templates", response_model=list[ReportTemplateOut])

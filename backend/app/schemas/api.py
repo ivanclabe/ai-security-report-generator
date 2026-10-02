@@ -52,6 +52,8 @@ class PinConversationRequest(BaseModel):
 class CompanyOut(BaseModel):
     id: str
     name: str
+    logo_key: str | None = None
+    consecutivo: str | None = None
 
 
 class ReportTemplateOut(BaseModel):

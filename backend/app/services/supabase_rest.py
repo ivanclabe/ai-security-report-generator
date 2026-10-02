@@ -58,6 +58,19 @@ async def insert(table: str, data: dict[str, Any]) -> dict:
         return response.json()[0]
 
 
+async def upsert(table: str, rows: list[dict[str, Any]], on_conflict: str = "id") -> list[dict]:
+    """Insert-or-update by `on_conflict` column (PostgREST merge-duplicates)."""
+    async with _client() as client:
+        response = await client.post(
+            f"/{table}",
+            params={"on_conflict": on_conflict},
+            json=rows,
+            headers={"Prefer": "resolution=merge-duplicates,return=representation"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 async def update(table: str, filters: dict[str, Any], data: dict[str, Any]) -> dict | None:
     params = _eq_params(filters)
     async with _client() as client:
