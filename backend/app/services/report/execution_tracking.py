@@ -20,6 +20,7 @@ async def start_execution(
     mode: str,
     request: ReportRequest | None,
     triggered_by: str | None = None,
+    llm: dict | None = None,
 ) -> str:
     execution_id = new_id("exec")
     await db.insert(
@@ -34,7 +35,8 @@ async def start_execution(
             "triggered_by": triggered_by,
             "request_params": request.model_dump(mode="json") if request else {},
             "data_import_ids": [],
-            "model": get_settings().llm_model,
+            "model": (llm or {}).get("model") or get_settings().llm_model,
+            "llm_provider": (llm or {}).get("provider"),
             "status": "running",
             "error_messages": [],
             "usage_metadata": {},
@@ -56,6 +58,7 @@ async def finish_execution(
     errors: list[str] | None = None,
     duration_ms: int | None = None,
     usage_metadata: dict | None = None,
+    llm: dict | None = None,
 ) -> None:
     update: dict = {
         "status": status,
@@ -66,6 +69,15 @@ async def finish_execution(
     }
     if company_id:
         update["company_id"] = company_id
+    if llm:
+        # the provider/model that actually answered (it can differ from the start after an AUTO fallback)
+        update["model"] = llm.get("model")
+        update["llm_provider"] = llm.get("provider")
+        update["fallback_used"] = bool(llm.get("fallback_used"))
+        last = (llm.get("fallbacks") or [None])[-1]
+        update["fallback_reason"] = last.get("reason") if last else None
+        update["llm_metrics"] = {k: llm.get(k) for k in ("requested_provider", "calls", "failed_calls", "latency_ms",
+                                                          "input_tokens", "output_tokens", "fallbacks")}
     if duration_ms is not None:
         update["duration_ms"] = duration_ms
     if usage_metadata:

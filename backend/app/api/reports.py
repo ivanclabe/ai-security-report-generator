@@ -7,17 +7,22 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import get_conversation_service
 from app.auth import require_user
+from app.schemas.api import LLMSelectionIn
 from app.security.context import CurrentUser
-from app.services import audit
+from app.services import audit, llm_runtime
 from app.services.conversation_service import ConversationService
 from app.services.report.request import ReportRequest
+
+
+class GenerateReportBody(ReportRequest):
+    llm: LLMSelectionIn | None = None
 
 router = APIRouter(prefix="/api/reports", tags=["reports"], dependencies=[Depends(require_user)])
 
 
 @router.post("/generate")
 async def generate_report(
-    body: ReportRequest,
+    body: GenerateReportBody,
     service: ConversationService = Depends(get_conversation_service),
     user: CurrentUser = Depends(require_user),
 ):
@@ -29,11 +34,16 @@ async def generate_report(
         "report.generation_requested",
         module="informes",
         context={"company": body.company or body.company_id, "period": f"{body.start_date} a {body.end_date}",
-                 "report_type": body.report_type, "format": body.format},
+                 "report_type": body.report_type, "format": body.format,
+                 "llm": body.llm.model_dump() if body.llm else "predeterminado"},
+    )
+    request = ReportRequest(**body.model_dump(exclude={"llm"}))
+    selection = await llm_runtime.selection_for(
+        body.llm.provider if body.llm else None, body.llm.model if body.llm else None, user
     )
 
     async def event_generator():
-        async for event in service.generate_report_deterministic(body, user=user):
+        async for event in service.generate_report_deterministic(request, user=user, llm=selection):
             yield {"event": event["event"], "data": json.dumps(event, default=str)}
 
     return EventSourceResponse(event_generator())

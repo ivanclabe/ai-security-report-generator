@@ -22,6 +22,9 @@ def test_redaction_removes_secrets_whatever_the_call_site_passes():
     assert out["password"] == REDACTED and out["SOURCE_PASSWORD"] == REDACTED
     assert out["access_token"] == REDACTED and out["Authorization"] == REDACTED
     assert out["password_changed"] is True
+    assert redact({"input_tokens": 120, "output_tokens": 30, "refresh_token": "abc"}) == {
+        "input_tokens": 120, "output_tokens": 30, "refresh_token": REDACTED,
+    }
     assert out["nested"] == {"api_key": REDACTED, "host": "10.2.85.8"}
     assert "abcdefghijklmnop" not in out["note"] and "user:pw" not in out["note"]
 

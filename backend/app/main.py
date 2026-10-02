@@ -9,6 +9,8 @@ from app.api import (
     audit_log,
     conversations,
     health,
+    llm,
+    llm_evaluations,
     me,
     observability,
     reference_data,
@@ -136,6 +138,8 @@ def create_app() -> FastAPI:
     app.include_router(source_settings.router)
     app.include_router(audit_log.router)
     app.include_router(observability.router)
+    app.include_router(llm_evaluations.router)  # before llm.router: /evaluations is more specific
+    app.include_router(llm.router)
 
     return app
 

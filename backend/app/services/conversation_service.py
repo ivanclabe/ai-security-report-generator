@@ -6,8 +6,10 @@ from typing import Any
 from langchain_core.callbacks import get_usage_metadata_callback
 
 from app.ingestion.errors import SourceConfigError, SourceError
+from app.llm.errors import LLMProviderError
+from app.llm.types import LLMSelection
 from app.security.context import CurrentUser
-from app.services import audit
+from app.services import audit, llm_runtime
 from app.services.observability import get_observability
 from app.services.report.execution_tracking import finish_execution, start_execution
 from app.services.report.pipeline import run_deterministic
@@ -38,12 +40,20 @@ def _error_code(exc: BaseException) -> str | None:
     seen = set()
     while exc is not None and id(exc) not in seen:
         seen.add(id(exc))
+        if isinstance(exc, LLMProviderError):
+            return llm_runtime.LLM_UNAVAILABLE
         if isinstance(exc, SourceConfigError):
             return SOURCE_NOT_CONFIGURED
         if isinstance(exc, SourceError):
             return "source_error"
         exc = exc.__cause__ or exc.__context__
     return None
+
+
+def _llm_audit(run) -> dict:
+    summary = run.summary()
+    return {k: summary[k] for k in ("requested_provider", "provider", "model", "fallback_used", "calls",
+                                     "input_tokens", "output_tokens")}
 
 
 class ConversationService:
@@ -133,9 +143,26 @@ class ConversationService:
         return items
 
     async def process_message(
-        self, conversation_id: str, user_message: str, *, user: CurrentUser | None = None
+        self,
+        conversation_id: str,
+        user_message: str,
+        *,
+        user: CurrentUser | None = None,
+        llm: LLMSelection | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         await self._conversations.add_message(conversation_id, "user", user_message)
+
+        # Which provider/model answers this turn (pre-flight checked; AUTO may fall back).
+        try:
+            run = await llm_runtime.start_run(llm or await llm_runtime.default_selection(user), purpose="asistente")
+        except LLMProviderError as exc:
+            message = llm_runtime.unavailable_message(exc)
+            await self._conversations.add_message(conversation_id, "assistant", message)
+            yield {"event": "result", "status": "error", "message": message, "errors": [str(exc)], "report": None,
+                   "error_code": llm_runtime.LLM_UNAVAILABLE}
+            return
+        for llm_event in run.drain_events():
+            yield llm_event
 
         config = {"configurable": {"thread_id": conversation_id}}
         graph_input = {"conversation_id": conversation_id, "user_request": user_message}
@@ -149,6 +176,7 @@ class ConversationService:
                 mode="conversational",
                 request=None,
                 triggered_by=user.member_id if user else None,
+                llm=run.summary(),
             )
         except Exception:  # noqa: BLE001 - audit trail is best-effort, never blocks a chat turn
             logger.warning("Could not start execution tracking for %s", conversation_id, exc_info=True)
@@ -168,11 +196,17 @@ class ConversationService:
                         "node": node_name,
                         "message": STATUS_MESSAGES.get(node_name, node_name),
                     }
+                for llm_event in run.drain_events():  # a provider switch mid-run
+                    yield llm_event
         except Exception as exc:  # noqa: BLE001 - surfaced to the user as a chat error, not swallowed
             usage_cb_ctx.__exit__(None, None, None)
+            for llm_event in run.drain_events():
+                yield llm_event
             error_code = _error_code(exc)
             if error_code == SOURCE_NOT_CONFIGURED:
                 message = _source_not_configured_message(await configuration_problems() or ["la configuración"])
+            elif error_code == llm_runtime.LLM_UNAVAILABLE:
+                message = f"El proveedor de IA no pudo responder: {exc}"
             else:
                 message = f"Tuve un problema al procesar tu solicitud: {exc}"
             await self._conversations.add_message(conversation_id, "assistant", message)
@@ -183,8 +217,10 @@ class ConversationService:
                 errors=[str(exc)],
                 duration_ms=duration_ms,
                 usage_metadata=usage_cb.usage_metadata,
+                llm=run.summary(),
             )
             await self._observe_run("conversational", "error", duration_ms, conversation_id, detail=str(exc))
+            llm_runtime.end_run()
             yield {
                 "event": "result",
                 "status": "error",
@@ -192,6 +228,7 @@ class ConversationService:
                 "errors": [str(exc)],
                 "report": None,
                 "error_code": error_code,
+                "llm": run.info(),
             }
             return
         else:
@@ -208,6 +245,7 @@ class ConversationService:
             "message": assistant_message,
             "errors": final_state.get("errors") or [],
             "report": None,
+            "llm": run.info(),
         }
 
         report_id = None
@@ -252,6 +290,7 @@ class ConversationService:
             errors=final_state.get("errors") or [],
             duration_ms=duration_ms,
             usage_metadata=usage_cb.usage_metadata,
+            llm=run.summary(),
         )
         await self._observe_run(
             "conversational", tracked_status, duration_ms, conversation_id,
@@ -265,13 +304,16 @@ class ConversationService:
                 resource_id=report_id,
                 context={"version": result["report"]["version"], "company": final_state.get("company"),
                          "format": result["report"]["format"], "conversation_id": conversation_id,
-                         "duration_ms": duration_ms},
+                         "duration_ms": duration_ms, "llm": _llm_audit(run)},
             )
 
+        for llm_event in run.drain_events():
+            yield llm_event
+        llm_runtime.end_run()
         yield result
 
     async def generate_report_deterministic(
-        self, request: ReportRequest, *, user: CurrentUser | None = None
+        self, request: ReportRequest, *, user: CurrentUser | None = None, llm: LLMSelection | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         """Modalidad 1 (formulario) entry point -- creates its own conversation as the
         persistence anchor (reused as-is: same in_reports/in_report_versions tables, same
@@ -304,6 +346,24 @@ class ConversationService:
             }
             return
 
+        # Same rule for the LLM: check the chosen provider before starting anything.
+        try:
+            run = await llm_runtime.start_run(llm or await llm_runtime.default_selection(user), purpose="informe")
+        except LLMProviderError as exc:
+            message = llm_runtime.unavailable_message(exc)
+            await audit.record(
+                "report.generation_blocked",
+                module="informes",
+                result="failure",
+                context={"reason": llm_runtime.LLM_UNAVAILABLE, "status": exc.status.value, "company": request.company,
+                         "requested_provider": (llm.provider if llm else None)},
+            )
+            yield {"event": "result", "status": "error", "message": message, "errors": [str(exc)], "report": None,
+                   "error_code": llm_runtime.LLM_UNAVAILABLE}
+            return
+        for llm_event in run.drain_events():
+            yield llm_event
+
         title = f"Informe — {request.company or request.company_id} — {request.start_date} a {request.end_date}"
         conversation = await self._conversations.create(title, created_by=user.member_id if user else None)
         conversation_id = conversation["id"]
@@ -328,6 +388,7 @@ class ConversationService:
                 mode="deterministic",
                 request=request,
                 triggered_by=user.member_id if user else None,
+                llm=run.summary(),
             )
         except Exception:  # noqa: BLE001 - audit trail is best-effort, never blocks generation
             logger.warning("Could not start execution tracking for %s", conversation_id, exc_info=True)
@@ -343,6 +404,8 @@ class ConversationService:
                         yield event
                     else:
                         final = event
+                    for llm_event in run.drain_events():  # a provider switch mid-run
+                        yield llm_event
             except Exception as exc:  # noqa: BLE001 - an unexpected failure here (e.g. PDF conversion
                 # crashing outside the errors pipeline.py already anticipates) must still end the
                 # stream cleanly, not leave the request hanging or surface a raw 500 mid-SSE.
@@ -363,6 +426,7 @@ class ConversationService:
                 errors=errors,
                 duration_ms=duration_ms,
                 usage_metadata=usage_metadata,
+                llm=run.summary(),
             )
             await self._observe_run("deterministic", "error", duration_ms, conversation_id, detail="; ".join(errors)[:300])
             await audit.record(
@@ -372,8 +436,11 @@ class ConversationService:
                 resource_type="conversation",
                 resource_id=conversation_id,
                 context={"company": request.company, "period": f"{request.start_date} a {request.end_date}",
-                         "errors": errors[:5], "error_code": error_code},
+                         "errors": errors[:5], "error_code": error_code, "llm": _llm_audit(run)},
             )
+            for llm_event in run.drain_events():
+                yield llm_event
+            llm_runtime.end_run()
             yield {
                 "event": "result",
                 "status": "error",
@@ -382,6 +449,7 @@ class ConversationService:
                 "report": None,
                 "conversation_id": conversation_id,
                 "error_code": error_code,
+                "llm": run.info(),
             }
             return
 
@@ -411,6 +479,7 @@ class ConversationService:
             report_version_id=version["id"],
             duration_ms=duration_ms,
             usage_metadata=usage_metadata,
+            llm=run.summary(),
         )
         await self._observe_run("deterministic", "ready", duration_ms, conversation_id)
         await audit.record(
@@ -420,8 +489,11 @@ class ConversationService:
             resource_id=report["id"],
             context={"version": version["version"], "company": company.name, "format": request.format,
                      "period": f"{request.start_date} a {request.end_date}", "report_type": request.report_type,
-                     "conversation_id": conversation_id, "duration_ms": duration_ms},
+                     "conversation_id": conversation_id, "duration_ms": duration_ms, "llm": _llm_audit(run)},
         )
+        for llm_event in run.drain_events():
+            yield llm_event
+        llm_runtime.end_run()
 
         yield {
             "event": "result",
@@ -437,6 +509,7 @@ class ConversationService:
                 "objective": spec.objective,
                 "format": request.format,
             },
+            "llm": run.info(),
         }
 
     async def _observe_run(

@@ -35,6 +35,9 @@ class Preferences(BaseModel):
     start_page: Literal["/", "/informes/nuevo", "/asistente"] = "/"
     density: Literal["comfortable", "compact"] = "comfortable"
     reduce_motion: bool = False
+    # Default AI provider/model for this user (each report/chat can still override it).
+    llm_provider: Literal["auto", "cloud", "local", "vllm"] | None = None
+    llm_model: str | None = Field(default=None, max_length=200)
 
 
 class PreferencesOut(BaseModel):

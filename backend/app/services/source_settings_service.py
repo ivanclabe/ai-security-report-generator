@@ -21,10 +21,9 @@ import time
 from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
-from cryptography.fernet import Fernet, InvalidToken
-
 from app.config.settings import get_settings
 from app.ingestion.config import SourceConfig
+from app.security import secret_box
 from app.security.context import CurrentUser
 from app.services import supabase_rest as db
 from app.services.db import now_iso
@@ -144,31 +143,25 @@ def check_password(value: str) -> str:
 # ---- secret box -------------------------------------------------------------------
 
 
-def _fernet() -> Fernet:
-    key = get_settings().source_secret_key.get_secret_value().strip()
-    if not key:
-        raise SourceSettingsError(
-            "El servidor no tiene SOURCE_SECRET_KEY configurada, así que no puede guardar la contraseña de "
-            "forma cifrada. Un administrador del servidor debe definirla en backend/.env."
-        )
+def _fernet():
     try:
-        return Fernet(key.encode())
-    except (ValueError, TypeError) as exc:
-        raise SourceSettingsError("SOURCE_SECRET_KEY no es una clave válida (Fernet, 32 bytes en base64).") from exc
+        return secret_box.fernet()
+    except secret_box.SecretBoxError as exc:
+        raise SourceSettingsError(str(exc)) from exc
 
 
 def encrypt_password(password: str) -> str:
-    return _fernet().encrypt(password.encode()).decode()
+    try:
+        return secret_box.encrypt(password)
+    except secret_box.SecretBoxError as exc:
+        raise SourceSettingsError(str(exc)) from exc
 
 
 def decrypt_password(ciphertext: str) -> str:
     try:
-        return _fernet().decrypt(ciphertext.encode()).decode()
-    except InvalidToken as exc:
-        raise SourceSettingsError(
-            "La contraseña guardada no se puede descifrar (la clave SOURCE_SECRET_KEY cambió). "
-            "Vuelve a escribirla en Fuente de Datos."
-        ) from exc
+        return secret_box.decrypt(ciphertext, what="La contraseña guardada")
+    except secret_box.SecretBoxError as exc:
+        raise SourceSettingsError(str(exc)) from exc
 
 
 # ---- load / save ------------------------------------------------------------------

@@ -14,7 +14,7 @@ from app.schemas.api import (
     UpdateConversationRequest,
 )
 from app.security.context import CurrentUser
-from app.services import audit
+from app.services import audit, llm_runtime
 from app.services.conversation_service import ConversationService
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"], dependencies=[Depends(require_user)])
@@ -108,7 +108,10 @@ async def send_message(
     )
 
     async def event_generator():
-        async for event in service.process_message(conversation_id, body.content, user=user):
+        selection = await llm_runtime.selection_for(
+            body.llm.provider if body.llm else None, body.llm.model if body.llm else None, user
+        )
+        async for event in service.process_message(conversation_id, body.content, user=user, llm=selection):
             yield {"event": event["event"], "data": json.dumps(event)}
 
     return EventSourceResponse(event_generator())

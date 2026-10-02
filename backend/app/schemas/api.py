@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class CreateConversationRequest(BaseModel):
@@ -37,8 +39,16 @@ class ConversationDetail(BaseModel):
     report: ReportOut | None = None
 
 
+class LLMSelectionIn(BaseModel):
+    """Provider/model for one execution (Cloud, Local, vLLM or Auto). Omitted = the user's default."""
+
+    provider: Literal["auto", "cloud", "local", "vllm"]
+    model: str | None = Field(default=None, max_length=200)
+
+
 class SendMessageRequest(BaseModel):
     content: str
+    llm: LLMSelectionIn | None = None
 
 
 class UpdateConversationRequest(BaseModel):

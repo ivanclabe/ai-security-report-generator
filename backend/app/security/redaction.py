@@ -12,9 +12,13 @@ REDACTED = "[oculto]"
 _SENSITIVE_KEY = re.compile(
     r"pass(word)?|pwd|secret|token|authorization|cookie|api[_-]?key|credential|ciphertext|session", re.IGNORECASE
 )
+# Usage counters are not secrets even though their names contain "token".
+_NOT_SECRET_KEY = re.compile(r"^(input|output|total|prompt|completion)_tokens$|_tokens_count$", re.IGNORECASE)
 _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[a-z0-9._~+/=-]{8,}")
 _JWT = re.compile(r"\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b")
 _URL_USERINFO = re.compile(r"(?i)\b(https?://)[^/\s:@]+:[^/\s@]+@")
+# Provider API keys that SDK error messages sometimes echo (Anthropic, OpenAI, Google, generic).
+_API_KEY = re.compile(r"\b(sk-(?:ant-|proj-)?[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|xai-[A-Za-z0-9]{16,})")
 _MAX_STRING = 500
 _MAX_ITEMS = 50
 _MAX_DEPTH = 4
@@ -23,6 +27,7 @@ _MAX_DEPTH = 4
 def redact_text(value: str, limit: int = _MAX_STRING) -> str:
     text = _BEARER.sub(lambda m: f"{m.group(1)} {REDACTED}", value)
     text = _JWT.sub(REDACTED, text)
+    text = _API_KEY.sub(REDACTED, text)
     text = _URL_USERINFO.sub(lambda m: f"{m.group(1)}{REDACTED}@", text)
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
@@ -38,7 +43,12 @@ def redact(value: Any, _depth: int = 0) -> Any:
                 break
             key = str(key)
             # a flag such as {"password_changed": true} says nothing secret -- keep it
-            sensitive = _SENSITIVE_KEY.search(key) and not isinstance(item, bool) and item is not None
+            sensitive = (
+                _SENSITIVE_KEY.search(key)
+                and not _NOT_SECRET_KEY.search(key)
+                and not isinstance(item, bool)
+                and item is not None
+            )
             out[key] = REDACTED if sensitive else redact(item, _depth + 1)
         return out
     if isinstance(value, (list, tuple, set)):

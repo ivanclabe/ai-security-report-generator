@@ -127,6 +127,7 @@ def _reset_sse_starlette_exit_event():
 def _reset_process_state():
     """Rate limiters, caches and the observability buffer are process-global: reset
     them so tests never see each other's attempts, members or events."""
+    from app.api.llm import reset_llm_rate_limit
     from app.api.me import reset_auth_event_rate_limit
     from app.api.source_settings import reset_source_settings_rate_limit
     from app.auth import clear_membership_cache
@@ -135,6 +136,7 @@ def _reset_process_state():
 
     reset_auth_event_rate_limit()
     reset_source_settings_rate_limit()
+    reset_llm_rate_limit()
     clear_membership_cache()
     invalidate_cache()
     get_observability().clear()
@@ -154,6 +156,21 @@ class FakeTokenVerifier:
         if claims is None:
             raise AuthError("invalid_token", "Sesión no válida. Inicia sesión de nuevo.")
         return {**claims, "aud": "authenticated", "role": "authenticated"}
+
+
+@pytest.fixture(autouse=True)
+def llm_servers():
+    """Every provider health check / model discovery goes to in-memory fakes, never the network."""
+    from app.llm.registry import set_probe_transport
+    from app.services.llm_settings_service import invalidate_cache
+    from tests.llm_fakes import FakeLLMServers
+
+    servers = FakeLLMServers()
+    set_probe_transport(servers.transport)
+    invalidate_cache()
+    yield servers
+    set_probe_transport(None)
+    invalidate_cache()
 
 
 @pytest.fixture(autouse=True)

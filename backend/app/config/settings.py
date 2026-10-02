@@ -11,8 +11,21 @@ PROJECT_ROOT = BACKEND_DIR.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # --- LLM providers (bootstrap) --------------------------------------------------
+    # Providers, models and routing are managed from the app (Configuración > Proveedores
+    # de IA, stored in Supabase with API keys encrypted). These values only seed a fresh
+    # install: Cloud = Anthropic with ANTHROPIC_API_KEY / LLM_MODEL; vLLM and Local are
+    # enabled here only if their base URL is set.
     anthropic_api_key: str = ""
     llm_model: str = "claude-sonnet-5"
+    llm_default_provider: str = "cloud"  # auto | cloud | local | vllm
+    llm_auto_order: str = "vllm,cloud"  # AUTO priority: first available wins, the rest are fallbacks
+    vllm_base_url: str = ""  # e.g. http://llm-server:8000
+    vllm_model: str = ""
+    vllm_api_key: SecretStr = SecretStr("")
+    local_llm_base_url: str = ""  # e.g. http://localhost:11434 (Ollama)
+    local_llm_model: str = ""
+    local_llm_runtime: str = "ollama"  # ollama | openai_compatible
 
     # "http" = the remote alarm source (SOURCE_* below); "mock" = synthetic demo/test data.
     data_provider: str = "http"

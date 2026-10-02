@@ -9,14 +9,20 @@ import json
 from datetime import date
 
 from app.schemas.report_spec import DocumentControl, ReportPeriod, ReportSpecification
-from app.services.report.narrative import _build_narrative_payload, generate_narrative
+from app.services.report.narrative import ReportNarrative, _build_narrative_payload, generate_narrative
 from app.services.report.request import ReportRequest
 from app.services.report.templates import get_template
 
 
 async def build_specification(request: ReportRequest, collected: dict) -> ReportSpecification:
+    narrative = await narrative_for(request, collected)
+    return assemble_specification(request, collected, narrative)
+
+
+async def narrative_for(request: ReportRequest, collected: dict) -> ReportNarrative:
+    """The LLM step of the specification (also used by the provider quality evaluation)."""
     payload = _build_narrative_payload(collected)
-    narrative = await generate_narrative(
+    return await generate_narrative(
         json.dumps(payload, indent=2, default=str),
         company=request.company,
         start_date=request.start_date,
@@ -25,6 +31,9 @@ async def build_specification(request: ReportRequest, collected: dict) -> Report
         report_requirements=request.report_requirements,
     )
 
+
+def assemble_specification(request: ReportRequest, collected: dict, narrative: ReportNarrative) -> ReportSpecification:
+    """Deterministic part: template sections + document metadata around the narrative."""
     template = get_template(request.report_type)
     sections = template(collected, narrative)
 

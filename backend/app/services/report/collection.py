@@ -57,8 +57,10 @@ class CollectionResult(BaseModel):
     data: dict
 
 
-async def collect(request: ReportRequest) -> CollectionResult:
-    provider = get_data_provider()
+async def collect(request: ReportRequest, provider=None) -> CollectionResult:
+    """`provider` defaults to the app's data provider; the LLM quality evaluation passes the
+    synthetic mock provider so comparing models never sends real client data anywhere."""
+    provider = provider or get_data_provider()
 
     company = await tools.get_company(
         provider, tools.GetCompanyParams(company_id=request.company_id, name=request.company)

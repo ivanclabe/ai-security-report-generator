@@ -6,6 +6,7 @@ langgraph>=0.2.62
 langgraph-checkpoint-sqlite>=2.0.1
 langchain-core>=0.3.28
 langchain-anthropic>=0.3.3
+langchain-openai>=1.6,<2
 aiosqlite==0.20.0
 python-dotenv==1.0.1
 sse-starlette==2.2.1

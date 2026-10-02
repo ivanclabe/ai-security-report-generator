@@ -26,7 +26,7 @@ from app.services import supabase_rest as db
 logger = logging.getLogger("app.ops")
 
 LEVELS = {"INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR}
-CATEGORIES = ("request", "auth", "source", "agent", "report", "config", "system")
+CATEGORIES = ("request", "auth", "source", "agent", "report", "config", "system", "llm")
 
 _ID_SEGMENT = re.compile(
     r"^(?:[a-z]+-[0-9a-f]{12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)$"
