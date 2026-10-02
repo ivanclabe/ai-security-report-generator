@@ -15,7 +15,7 @@ import type { ThemePreference, UserPreferences } from "../types";
 function ThemePreview({ dark }: { dark: boolean }) {
   // A miniature of the app in that theme -- fixed colors on purpose (it previews the OTHER theme too).
   const c = dark
-    ? { bg: "#0a0e0c", nav: "#0e1311", card: "#121815", line: "#28322d", text: "#e6ede9", muted: "#7e8c85", primary: "#3aaa6a" }
+    ? { bg: "#080a0e", nav: "#0b0d12", card: "#0f1218", line: "#242933", text: "#e5e9f0", muted: "#747d8c", primary: "#3aaa6a" }
     : { bg: "#f6f8f7", nav: "#ffffff", card: "#ffffff", line: "#dee4e1", text: "#101814", muted: "#707d76", primary: "#00532a" };
   return (
     <span aria-hidden="true" className="flex h-20 w-full overflow-hidden rounded-md border" style={{ background: c.bg, borderColor: c.line }}>
