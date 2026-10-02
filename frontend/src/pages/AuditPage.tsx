@@ -19,6 +19,7 @@ const ACTION_GROUPS = [
   { value: "source", label: "Fuente de datos" },
   { value: "report", label: "Informes" },
   { value: "agent", label: "Asistente" },
+  { value: "llm", label: "Inteligencia artificial" },
   { value: "settings", label: "Preferencias" },
   { value: "audit", label: "Auditoría" },
 ];

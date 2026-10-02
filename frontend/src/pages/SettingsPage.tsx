@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { IconCheckCircle, IconLogout, IconMonitor, IconMoon, IconSun, IconUser } from "../components/icons";
+import { LLMSelector } from "../components/llm/LLMSelector";
+import { SettingsTabs } from "../components/SettingsTabs";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -83,6 +85,7 @@ export function SettingsPage() {
           </span>
         }
       />
+      <SettingsTabs />
       {error && <Alert tone="danger" className="mb-4">{error}</Alert>}
 
       <div className="space-y-5">
@@ -180,6 +183,16 @@ export function SettingsPage() {
                 </select>
               )}
             </Field>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Inteligencia artificial"
+            description="Proveedor y modelo que usarás por defecto. Puedes cambiarlo en cada informe o conversación."
+          />
+          <CardBody>
+            <LLMSelector />
           </CardBody>
         </Card>
 

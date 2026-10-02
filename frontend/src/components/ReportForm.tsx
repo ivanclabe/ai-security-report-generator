@@ -4,8 +4,11 @@ import { AUDIENCES } from "../lib/constants";
 import * as api from "../services/api";
 import { useConversationStore } from "../store/useConversationStore";
 import { usePreferencesStore } from "../store/usePreferencesStore";
+import { useLLMStore } from "../store/useLLMStore";
 import { useSourceStatusStore } from "../store/useSourceStatusStore";
-import type { Company, ErrorCode, ReportInfo, ReportTemplate } from "../types";
+import type { Company, ErrorCode, LLMRunInfo, ReportInfo, ReportTemplate } from "../types";
+import { LLMRunStatus } from "./llm/LLMRunStatus";
+import { LLMSelector } from "./llm/LLMSelector";
 import { IconArrowRight, IconFilePlus } from "./icons";
 import { ProgressStatus } from "./ProgressStatus";
 import { ReportCard } from "./ReportCard";
@@ -38,7 +41,14 @@ function presets() {
   ];
 }
 
-type Result = { report: ReportInfo | null; message: string; isError: boolean; errorCode?: ErrorCode; conversationId?: string };
+type Result = {
+  report: ReportInfo | null;
+  message: string;
+  isError: boolean;
+  errorCode?: ErrorCode;
+  conversationId?: string;
+  llm?: LLMRunInfo | null;
+};
 
 export function ReportForm() {
   const navigate = useNavigate();
@@ -46,6 +56,8 @@ export function ReportForm() {
   const selectConversation = useConversationStore((s) => s.selectConversation);
   const prefs = usePreferencesStore((s) => s.preferences);
   const sourceStatus = useSourceStatusStore((s) => s.status);
+  const llmSelection = useLLMStore((s) => s.selection);
+  const [llmInfo, setLlmInfo] = useState<LLMRunInfo | null>(null);
   const loadSourceStatus = useSourceStatusStore((s) => s.load);
 
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -98,7 +110,8 @@ export function ReportForm() {
 
     setIsSubmitting(true);
     setResult(null);
-    setProgressMessage("Validando parámetros…");
+    setLlmInfo(null);
+    setProgressMessage("Comprobando el proveedor de IA…");
 
     const categories = categoriesText
       .split(",")
@@ -116,17 +129,22 @@ export function ReportForm() {
           focus_categories: categories.length ? categories : undefined,
           risk_level_filter: riskLevels.length ? riskLevels : undefined,
           format,
+          llm: llmSelection,
         },
         (event) => {
-          if (event.event === "progress") {
+          if (event.event === "llm") {
+            setLlmInfo(event);
+          } else if (event.event === "progress") {
             setProgressMessage(event.message);
           } else if (event.event === "result") {
+            if (event.llm) setLlmInfo(event.llm);
             setResult({
               report: event.report,
               message: event.message,
               isError: event.status === "error",
               errorCode: event.error_code ?? null,
               conversationId: event.conversation_id,
+              llm: event.llm ?? null,
             });
             if (event.error_code === "source_not_configured") loadSourceStatus();
             loadConversations().catch(() => {});
@@ -281,6 +299,16 @@ export function ReportForm() {
           </CardBody>
         </Card>
 
+        <Card>
+          <CardHeader
+            title="4. Modelo de IA"
+            description="Quién redacta y analiza el informe. Auto usa el primer proveedor disponible y cambia a otro si falla."
+          />
+          <CardBody>
+            <LLMSelector disabled={isSubmitting} />
+          </CardBody>
+        </Card>
+
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!canSubmit} loading={isSubmitting} icon={<IconFilePlus className="h-4 w-4" aria-hidden="true" />}>
             {isSubmitting ? "Generando informe…" : "Generar informe"}
@@ -292,9 +320,11 @@ export function ReportForm() {
       </form>
 
       {isSubmitting && progressMessage && (
-        <Card className="px-5 py-4">
+        <Card className="space-y-3 px-5 py-4">
+          <p className="text-sm font-semibold text-fg">Generando informe de seguridad</p>
+          <LLMRunStatus info={llmInfo} />
           <ProgressStatus message={progressMessage} />
-          <p className="mt-2 pl-10 text-xs text-fg-subtle">Puedes seguir usando la aplicación; el informe se guarda al terminar.</p>
+          <p className="pl-10 text-xs text-fg-subtle">Puedes seguir usando la aplicación; el informe se guarda al terminar.</p>
         </Card>
       )}
 
@@ -307,6 +337,7 @@ export function ReportForm() {
               <span className="whitespace-pre-wrap">{result.message}</span>
             </Alert>
           )}
+          {result.llm && !isSubmitting && <LLMRunStatus info={result.llm} />}
           {result.report && (
             <div className="flex flex-wrap items-end gap-3">
               <ReportCard report={result.report} showQuickActions={false} />

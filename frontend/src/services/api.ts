@@ -6,7 +6,16 @@ import type {
   AuditPage,
   Company,
   ConversationSummary,
+  Evaluation,
   GenerateReportRequest,
+  LLMCatalog,
+  LLMHealth,
+  LLMProviderInput,
+  LLMProviderKind,
+  LLMProviderSettings,
+  LLMProvidersAdmin,
+  LLMRouting,
+  LLMSelection,
   Me,
   MessageOut,
   ObservabilitySummary,
@@ -173,8 +182,13 @@ async function stream(path: string, body: unknown, onEvent: (event: StreamEvent)
 
 export const generateReport = (req: GenerateReportRequest, onEvent: (e: StreamEvent) => void, signal?: AbortSignal) =>
   stream("/reports/generate", req, onEvent, signal);
-export const sendMessage = (id: string, content: string, onEvent: (e: StreamEvent) => void, signal?: AbortSignal) =>
-  stream(`/conversations/${id}/messages`, { content }, onEvent, signal);
+export const sendMessage = (
+  id: string,
+  content: string,
+  onEvent: (e: StreamEvent) => void,
+  signal?: AbortSignal,
+  llm?: LLMSelection,
+) => stream(`/conversations/${id}/messages`, { content, llm }, onEvent, signal);
 
 // ---- data source -------------------------------------------------------------------
 
@@ -210,3 +224,25 @@ export const listOpsEvents = (params: { level?: string; category?: string; q?: s
 export const listRequests = (limit = 100) =>
   request<{ items: RequestRecord[]; stats: RequestStats }>(`/observability/requests?limit=${limit}`);
 export const listExecutions = (limit = 50) => request<{ items: AgentExecution[] }>(`/observability/executions?limit=${limit}`);
+
+// ---- AI providers --------------------------------------------------------------------------
+
+export const getLLMCatalog = () => request<LLMCatalog>("/llm/catalog");
+export const checkLLMHealth = (provider: LLMProviderKind, model?: string | null, refresh = false) =>
+  request<LLMHealth>("/llm/health", { method: "POST", body: json({ provider, model: model || null, refresh }) });
+export const getLLMProviders = () => request<LLMProvidersAdmin>("/llm/providers");
+export const saveLLMProvider = (provider: LLMProviderKind, input: LLMProviderInput, revision?: number) =>
+  request<LLMProviderSettings>(`/llm/providers/${provider}`, {
+    method: "PUT",
+    body: json({ ...input, expected_revision: revision ?? null }),
+  });
+export const testLLMProvider = (provider: LLMProviderKind, input: LLMProviderInput) =>
+  request<LLMHealth>(`/llm/providers/${provider}/test`, { method: "POST", body: json(input) });
+export const refreshLLMModels = (provider: LLMProviderKind) =>
+  request<{ provider: string; models: string[] }>(`/llm/providers/${provider}/models/refresh`, { method: "POST" });
+export const saveLLMRouting = (routing: Omit<LLMRouting, "revision" | "updated_at" | "origin">, revision?: number) =>
+  request<LLMRouting>("/llm/routing", { method: "PUT", body: json({ ...routing, expected_revision: revision ?? null }) });
+export const startEvaluation = (candidates: { provider: LLMProviderKind; model?: string | null }[], repetitions: number) =>
+  request<Evaluation>("/llm/evaluations", { method: "POST", body: json({ candidates, repetitions }) });
+export const listEvaluations = () => request<Evaluation[]>("/llm/evaluations");
+export const getEvaluation = (id: string) => request<Evaluation>(`/llm/evaluations/${id}`);

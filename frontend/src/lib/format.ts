@@ -60,6 +60,15 @@ export const ACTION_LABELS: Record<string, string> = {
   "conversation.deleted": "Conversación eliminada",
   "settings.preferences_updated": "Preferencias actualizadas",
   "audit.exported": "Exportación de auditoría",
+  "llm.provider_fallback": "Cambio automático de proveedor de IA",
+  "llm.provider_error": "Error del proveedor de IA",
+  "llm.provider_settings_updated": "Configuración de proveedor de IA actualizada",
+  "llm.model_changed": "Cambio de modelo predeterminado",
+  "llm.routing_updated": "Enrutamiento de IA actualizado",
+  "llm.provider_tested": "Prueba de proveedor de IA",
+  "llm.models_refreshed": "Actualización de modelos disponibles",
+  "llm.evaluation_started": "Evaluación de IA iniciada",
+  "llm.evaluation_completed": "Evaluación de IA completada",
 };
 
 export const MODULE_LABELS: Record<string, string> = {
@@ -69,6 +78,7 @@ export const MODULE_LABELS: Record<string, string> = {
   asistente: "Asistente",
   configuracion: "Configuración",
   auditoria: "Auditoría",
+  ia: "Inteligencia artificial",
 };
 
 export const RESULT_LABELS: Record<string, { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
@@ -86,6 +96,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
   report: "Informes",
   config: "Configuración",
   system: "Sistema",
+  llm: "IA",
 };
 
 export const EXECUTION_STATUS: Record<string, { label: string; tone: "success" | "warning" | "danger" | "info" | "neutral" }> = {

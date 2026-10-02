@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { IconLogout, IconMenu, IconMoon, IconShield, IconSun, IconX } from "../components/icons";
+import { LLMPill } from "../components/llm/LLMPill";
 import { Toaster } from "../components/ui/Toaster";
 import { useAuthStore } from "../store/useAuthStore";
 import { usePreferencesStore } from "../store/usePreferencesStore";
@@ -188,6 +189,7 @@ export function AppShell() {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <LLMPill />
             <SourcePill />
             <ThemeToggle />
           </div>

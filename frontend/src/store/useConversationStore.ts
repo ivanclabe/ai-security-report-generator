@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as api from "../services/api";
-import type { ChatMessage, ConversationSummary, ReportInfo } from "../types";
+import type { ChatMessage, ConversationSummary, LLMRunInfo, ReportInfo } from "../types";
+import { useLLMStore } from "./useLLMStore";
 
 interface ConversationState {
   conversations: ConversationSummary[];
@@ -9,6 +10,8 @@ interface ConversationState {
   latestReportByConversation: Record<string, ReportInfo | null>;
   isStreaming: boolean;
   progressMessage: string | null;
+  /** Provider/model answering the current turn (updated live on a fallback). */
+  llmRun: LLMRunInfo | null;
   error: string | null;
   isLoadingConversation: boolean;
 
@@ -41,6 +44,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   latestReportByConversation: {},
   isStreaming: false,
   progressMessage: null,
+  llmRun: null,
   error: null,
   isLoadingConversation: false,
 
@@ -105,13 +109,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         [id]: [...(state.messagesByConversation[id] ?? []), userMessage],
       },
       isStreaming: true,
-      progressMessage: "Entendiendo la solicitud...",
+      progressMessage: "Comprobando el proveedor de IA…",
+      llmRun: null,
       error: null,
     }));
 
     try {
       await api.sendMessage(id, content, (event) => {
-        if (event.event === "progress") {
+        if (event.event === "llm") {
+          set({ llmRun: event });
+        } else if (event.event === "progress") {
           set({ progressMessage: event.message });
         } else if (event.event === "result") {
           const assistantMessage: ChatMessage = {
@@ -121,6 +128,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             report: event.report,
             isError: event.status === "error",
             errorCode: event.error_code ?? null,
+            llm: event.llm ?? null,
           };
           set((state) => ({
             messagesByConversation: {
@@ -132,7 +140,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               : state.latestReportByConversation,
           }));
         }
-      });
+      }, undefined, useLLMStore.getState().selection);
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Algo salió mal. Intenta de nuevo." });
     } finally {

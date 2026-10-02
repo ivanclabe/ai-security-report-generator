@@ -346,3 +346,21 @@ export function IconArrowRight(props: IconProps) {
     </svg>
   );
 }
+
+export function IconCpu(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <path d="M9.5 9.5h5v5h-5zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+    </svg>
+  );
+}
+
+export function IconBeaker(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M9 3h6M10 3v6l-5.5 9.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3" />
+      <path d="M7.5 15h9" />
+    </svg>
+  );
+}

@@ -88,6 +88,39 @@ export const FAQ: FaqCategory[] = [
     ],
   },
   {
+    id: "ia",
+    title: "Inteligencia artificial",
+    items: [
+      {
+        q: "¿Cómo elijo el proveedor y el modelo de IA?",
+        a: "En la barra superior (botón con el chip) o en la tarjeta «Modelo de IA» del formulario: elige Cloud, vLLM, Local o Auto y luego el modelo. La lista de modelos la entrega el propio proveedor. Tu elección queda como predeterminada y puedes cambiarla en cada informe o conversación.",
+        link: { to: "/configuracion", label: "Abrir Configuración" },
+      },
+      {
+        q: "¿Qué hace el modo Auto?",
+        a: "Usa el primer proveedor disponible según el orden configurado (por ejemplo vLLM y, si falla, Cloud). Antes de empezar comprueba la disponibilidad y, si una llamada falla por tiempo de espera, conexión o error del servidor, continúa con el siguiente. Cada cambio se muestra en pantalla y queda en Observabilidad y Auditoría.",
+      },
+      {
+        q: "Elegí un proveedor y me dice que no está disponible. ¿Por qué no cambió solo?",
+        a: "Cuando eliges un proveedor concreto se respeta tu elección: si no está disponible se avisa antes de empezar, con el motivo (autenticación, tiempo de espera, modelo inexistente…). Para cambio automático usa Auto.",
+      },
+      {
+        q: "¿Cómo configuro un servidor vLLM o un modelo local?",
+        a: "Un administrador entra a Configuración > Proveedores de IA, completa la URL del servidor (con el puerto), pulsa «Probar conexión», elige el modelo descubierto y guarda. Local y vLLM son proveedores independientes aunque apunten al mismo servidor.",
+        link: { to: "/configuracion/proveedores-ia", label: "Proveedores de IA" },
+      },
+      {
+        q: "¿Cómo sé que un modelo nuevo no empeora los informes?",
+        a: "En Configuración > Evaluación de IA compara candidatos con los mismos casos: exactitud de extracción, severidad, riesgos, recomendaciones, calidad del informe, consistencia, latencia, errores y tokens. Si un candidato rinde peor que la línea base se señala claramente.",
+        link: { to: "/configuracion/evaluacion-ia", label: "Evaluación de IA" },
+      },
+      {
+        q: "¿Mis datos salen de la empresa?",
+        a: "Con Cloud, los datos del informe se envían al proveedor en la nube elegido. Con vLLM o Local se procesan en servidores de la propia infraestructura. Las evaluaciones de calidad usan datos sintéticos, nunca datos de clientes. Las API keys se guardan cifradas y no se registran prompts ni respuestas.",
+      },
+    ],
+  },
+  {
     id: "cuenta",
     title: "Cuenta y seguridad",
     items: [

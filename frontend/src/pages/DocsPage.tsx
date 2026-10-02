@@ -97,6 +97,30 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
     ),
   },
   {
+    id: "ia",
+    title: "Modelos de IA (Cloud, vLLM, Local, Auto)",
+    body: (
+      <>
+        <p>
+          El análisis y la redacción los hace un modelo de IA que se elige desde la aplicación, sin cambiar el flujo del
+          informe:
+        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          <li><strong>Cloud</strong>: modelos en la nube (Anthropic Claude, OpenAI GPT, Google Gemini).</li>
+          <li><strong>vLLM</strong>: servidor vLLM propio (p. ej. Qwen, Llama, Mistral).</li>
+          <li><strong>Local</strong>: runtime local como Ollama.</li>
+          <li><strong>Auto</strong>: el primero disponible según el orden configurado, con cambio automático si falla.</li>
+        </ul>
+        <p>
+          El proveedor y el modelo activos se ven siempre en la barra superior y durante la generación. Los administradores
+          configuran endpoints, API keys (cifradas), modelos y parámetros en{" "}
+          <Link to="/configuracion/proveedores-ia">Proveedores de IA</Link>, y comparan calidad en{" "}
+          <Link to="/configuracion/evaluacion-ia">Evaluación de IA</Link>.
+        </p>
+      </>
+    ),
+  },
+  {
     id: "analisis",
     title: "Conceptos básicos",
     body: (

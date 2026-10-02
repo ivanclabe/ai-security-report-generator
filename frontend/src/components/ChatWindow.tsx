@@ -3,6 +3,8 @@ import * as api from "../services/api";
 import { useConversationStore } from "../store/useConversationStore";
 import type { ChatMessage, Company } from "../types";
 import { IconBot, IconSend } from "./icons";
+import { LLMRunStatus } from "./llm/LLMRunStatus";
+import { LLMSelector } from "./llm/LLMSelector";
 import { MessageBubble } from "./MessageBubble";
 import { ProgressStatus } from "./ProgressStatus";
 import { Alert } from "./ui/Alert";
@@ -28,6 +30,7 @@ export function ChatWindow() {
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const isLoadingConversation = useConversationStore((s) => s.isLoadingConversation);
   const progressMessage = useConversationStore((s) => s.progressMessage);
+  const llmRun = useConversationStore((s) => s.llmRun);
   const error = useConversationStore((s) => s.error);
   const sendUserMessage = useConversationStore((s) => s.sendUserMessage);
 
@@ -88,6 +91,11 @@ export function ChatWindow() {
             </div>
           )}
           {!isLoadingConversation && messages.map((m) => <MessageBubble key={m.id} message={m} />)}
+          {isStreaming && llmRun && (
+            <div className="pl-10">
+              <LLMRunStatus info={llmRun} />
+            </div>
+          )}
           {isStreaming && progressMessage && <ProgressStatus message={progressMessage} />}
           {error && <Alert tone="danger">{error}</Alert>}
           <div ref={bottomRef} />
@@ -100,6 +108,10 @@ export function ChatWindow() {
         }}
         className="border-t border-line bg-surface p-3 sm:p-4"
       >
+        <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-xs text-fg-subtle">
+          <span>IA:</span>
+          <LLMSelector compact disabled={isStreaming} />
+        </div>
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <label className="sr-only" htmlFor="chat-input">
             Mensaje

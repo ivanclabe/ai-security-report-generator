@@ -34,6 +34,12 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             <SourceNotConfiguredNotice compact />
           </div>
         )}
+        {message.llm && !isUser && (
+          <p className="mt-1 text-[11px] text-fg-subtle" title={`Proveedor solicitado: ${message.llm.requested_label}`}>
+            {message.llm.provider_label} · {message.llm.model}
+            {message.llm.switched && message.llm.last_fallback ? ` (tras cambio por ${message.llm.last_fallback.reason_label.toLowerCase()})` : ""}
+          </p>
+        )}
         {message.report && <ReportCard report={message.report} />}
       </div>
       {isUser && (

@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { IconShield } from "./components/icons";
 import { Spinner } from "./components/ui/Spinner";
 import { AppShell } from "./layout/AppShell";
+import { AIEvaluationPage } from "./pages/AIEvaluationPage";
+import { AIProvidersPage } from "./pages/AIProvidersPage";
 import { AssistantPage } from "./pages/AssistantPage";
 import { AuditPage } from "./pages/AuditPage";
 import { DocsPage } from "./pages/DocsPage";
@@ -90,6 +92,22 @@ export default function App() {
         <Route path="faq" element={<FaqPage />} />
         <Route path="documentacion" element={<DocsPage />} />
         <Route path="configuracion" element={<SettingsPage />} />
+        <Route
+          path="configuracion/proveedores-ia"
+          element={
+            <RequireAdmin>
+              <AIProvidersPage />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="configuracion/evaluacion-ia"
+          element={
+            <RequireAdmin>
+              <AIEvaluationPage />
+            </RequireAdmin>
+          }
+        />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

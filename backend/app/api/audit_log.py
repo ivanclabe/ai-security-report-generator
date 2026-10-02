@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/audit", tags=["audit"])
 _SAFE_TEXT = re.compile(r"[^\w\s.@:\-]", re.UNICODE)
 _IDENTIFIER = re.compile(r"^[a-z_]+(\.[a-z_]+)*$")
 
-MODULES = ["auth", "fuente_de_datos", "informes", "asistente", "configuracion", "auditoria"]
+MODULES = ["auth", "fuente_de_datos", "informes", "asistente", "ia", "configuracion", "auditoria"]
 
 
 class AuditEntry(BaseModel):

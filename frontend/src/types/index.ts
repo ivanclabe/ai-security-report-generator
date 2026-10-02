@@ -40,7 +40,7 @@ export interface ProgressEvent {
 }
 
 /** Machine-readable failure reasons the UI can act on (e.g. "go configure the source"). */
-export type ErrorCode = "source_not_configured" | "source_error" | null;
+export type ErrorCode = "source_not_configured" | "source_error" | "llm_unavailable" | null;
 
 export interface ResultEvent {
   event: "result";
@@ -50,9 +50,10 @@ export interface ResultEvent {
   report: ReportInfo | null;
   conversation_id?: string;
   error_code?: ErrorCode;
+  llm?: LLMRunInfo;
 }
 
-export type StreamEvent = ProgressEvent | ResultEvent;
+export type StreamEvent = ProgressEvent | ResultEvent | LLMEvent;
 
 export interface ChatMessage {
   id: string;
@@ -61,6 +62,7 @@ export interface ChatMessage {
   report?: ReportInfo | null;
   isError?: boolean;
   errorCode?: ErrorCode;
+  llm?: LLMRunInfo | null;
 }
 
 export interface Company {
@@ -85,6 +87,7 @@ export interface GenerateReportRequest {
   focus_categories?: string[];
   risk_level_filter?: string[];
   format?: string;
+  llm?: LLMSelection;
 }
 
 // ---- identity & preferences ------------------------------------------------------
@@ -104,6 +107,8 @@ export interface UserPreferences {
   start_page: "/" | "/informes/nuevo" | "/asistente";
   density: "comfortable" | "compact";
   reduce_motion: boolean;
+  llm_provider?: LLMProvider | null;
+  llm_model?: string | null;
 }
 
 export interface PreferencesPayload {
@@ -274,4 +279,194 @@ export interface AgentExecution {
   completed_at: string | null;
   error_count: number;
   estimated_cost_usd: number | null;
+}
+
+// ---- AI providers (LLM Provider Layer) -------------------------------------------------
+
+export type LLMProvider = "auto" | "cloud" | "local" | "vllm";
+export type LLMProviderKind = Exclude<LLMProvider, "auto">;
+
+export interface LLMSelection {
+  provider: LLMProvider;
+  model?: string | null;
+}
+
+export interface LLMCatalogProvider {
+  provider: LLMProviderKind;
+  label: string;
+  vendor_label: string;
+  enabled: boolean;
+  configured: boolean;
+  problem: string | null;
+  default_model: string;
+  models: string[];
+}
+
+export interface LLMCatalog {
+  selectable: LLMProvider[];
+  providers: LLMCatalogProvider[];
+  routing: {
+    default_provider: LLMProvider;
+    auto_order: LLMProviderKind[];
+    auto_candidates: LLMProviderKind[];
+    preflight_check: boolean;
+    runtime_fallback: boolean;
+  };
+  default_selection: { provider: LLMProvider; model: string | null };
+}
+
+export type LLMHealthStatus =
+  | "available"
+  | "unavailable"
+  | "auth_error"
+  | "timeout"
+  | "model_unavailable"
+  | "connection_error"
+  | "server_error"
+  | "rate_limited"
+  | "not_configured"
+  | "disabled";
+
+export interface LLMHealth {
+  provider: LLMProviderKind;
+  status: LLMHealthStatus;
+  label: string;
+  ok: boolean;
+  latency_ms: number | null;
+  detail: string;
+  model: string | null;
+  models_count: number;
+  checked_at: string;
+  models?: string[];
+}
+
+export interface LLMParams {
+  temperature: number | null;
+  max_tokens: number | null;
+  top_p: number | null;
+  timeout_seconds: number;
+  context_window: number | null;
+  structured_output: "auto" | "json_schema" | "function_calling" | "json_mode";
+}
+
+export interface LLMProviderSettings {
+  provider: LLMProviderKind;
+  label: string;
+  vendor: string;
+  vendor_label: string;
+  enabled: boolean;
+  base_url: string;
+  effective_base_url: string;
+  api_key_set: boolean;
+  api_key_hint: string | null;
+  requires_api_key: boolean;
+  default_model: string;
+  manual_models: string[];
+  discovered_models: string[];
+  models: string[];
+  discovery_enabled: boolean;
+  params: LLMParams;
+  revision: number;
+  updated_at: string | null;
+  origin: "app" | "env" | string;
+}
+
+export interface LLMProviderInput {
+  vendor: string;
+  enabled: boolean;
+  base_url: string;
+  api_key?: string;
+  clear_api_key?: boolean;
+  default_model: string;
+  manual_models: string[];
+  discovery_enabled: boolean;
+  params: LLMParams;
+}
+
+export interface LLMRouting {
+  default_provider: LLMProvider;
+  auto_order: LLMProviderKind[];
+  health_ttl_seconds: number;
+  preflight_check: boolean;
+  runtime_fallback: boolean;
+  revision: number;
+  updated_at: string | null;
+  origin: string;
+}
+
+export interface LLMVendorOption {
+  vendor: string;
+  label: string;
+  default_base_url: string;
+  requires_api_key: boolean;
+}
+
+export interface LLMProvidersAdmin {
+  providers: LLMProviderSettings[];
+  routing: LLMRouting;
+  vendors: Record<LLMProviderKind, LLMVendorOption[]>;
+  encryption_ready: boolean;
+}
+
+/** What actually runs a report / chat turn (SSE "llm" events and the result). */
+export interface LLMRunInfo {
+  requested: LLMProvider;
+  requested_label: string;
+  provider: LLMProviderKind;
+  provider_label: string;
+  vendor: string;
+  model: string;
+  fallbacks: { provider: LLMProviderKind; model: string; label: string }[];
+  switched: boolean;
+  last_fallback: { from: string; to: string; reason: string; reason_label: string; stage: string } | null;
+}
+
+export interface LLMEvent extends LLMRunInfo {
+  event: "llm";
+  phase: "selected" | "fallback";
+}
+
+export interface EvaluationMetrics {
+  extraction_accuracy: number;
+  severity_accuracy: number;
+  risk_identification: number;
+  recommendation_quality: number;
+  report_quality: number;
+  consistency: number | null;
+}
+
+export interface EvaluationResult {
+  provider: LLMProviderKind;
+  requested_model: string | null;
+  status: "completed" | "unavailable";
+  model?: string;
+  vendor?: string;
+  metrics?: EvaluationMetrics;
+  overall?: number;
+  calls?: number;
+  failed_calls?: number;
+  avg_latency_ms?: number | null;
+  input_tokens?: number;
+  output_tokens?: number;
+  errors?: string[];
+  error_count?: number;
+  validation_errors?: number;
+  duration_ms?: number;
+  error?: string;
+}
+
+export interface Evaluation {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  candidates: { provider: LLMProviderKind; model: string | null }[];
+  repetitions: number;
+  results: EvaluationResult[];
+  summary: {
+    baseline: { provider: string; model: string; overall: number } | null;
+    ranking: { provider: string; model: string; overall: number }[];
+    degradations: { provider: string; model: string; overall_delta: number; degraded: boolean; worse_metrics: Record<string, number> }[];
+  } | null;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
