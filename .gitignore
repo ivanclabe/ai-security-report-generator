@@ -21,9 +21,6 @@ tsconfig.tsbuildinfo
 # Env
 .env
 .env.local
-# Source address/credentials saved from the app (0600, contains the source password)
-backend/source_settings.json
-.source_settings.*
 
 # OS
 .DS_Store

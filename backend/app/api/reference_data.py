@@ -4,12 +4,12 @@ rather than one router file each since both are simple reference-data lookups
 with no write operations."""
 from fastapi import APIRouter, Depends
 
-from app.auth import require_auth
+from app.auth import require_user
 from app.schemas.api import CompanyOut, ReportTemplateOut
 from app.services.company_registry import get_company_registry
 from app.services.repositories import ReportTemplateRepository
 
-router = APIRouter(prefix="/api", tags=["reference-data"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api", tags=["reference-data"], dependencies=[Depends(require_user)])
 
 _templates = ReportTemplateRepository()
 

@@ -14,10 +14,13 @@ def _settings(monkeypatch, **env) -> Settings:
     return Settings(_env_file=None)
 
 
-def test_missing_configuration_is_logged_naming_the_variables(monkeypatch, caplog):
-    with caplog.at_level(logging.ERROR):
+def test_missing_bootstrap_values_point_to_fuente_de_datos(monkeypatch, caplog):
+    # backend/.env is only a bootstrap now: the source is configured from the app
+    with caplog.at_level(logging.INFO):
         _check_data_source(_settings(monkeypatch))
+    assert "Fuente de Datos" in caplog.text
     assert "SOURCE_BASE_URL" in caplog.text and "SOURCE_USERNAME" in caplog.text and "SOURCE_PASSWORD" in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
 def test_configured_source_logs_the_host_but_never_the_credentials(monkeypatch, caplog):

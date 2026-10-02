@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import get_conversation_service
-from app.auth import require_auth
+from app.auth import require_user
 from app.schemas.api import (
     ConversationDetail,
     ConversationSummary,
@@ -13,16 +13,20 @@ from app.schemas.api import (
     SendMessageRequest,
     UpdateConversationRequest,
 )
+from app.security.context import CurrentUser
+from app.services import audit
 from app.services.conversation_service import ConversationService
 
-router = APIRouter(prefix="/api/conversations", tags=["conversations"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/conversations", tags=["conversations"], dependencies=[Depends(require_user)])
 
 
 @router.post("", response_model=ConversationSummary)
 async def create_conversation(
-    body: CreateConversationRequest, service: ConversationService = Depends(get_conversation_service)
+    body: CreateConversationRequest,
+    service: ConversationService = Depends(get_conversation_service),
+    user: CurrentUser = Depends(require_user),
 ):
-    return await service.create_conversation(body.title)
+    return await service.create_conversation(body.title, user=user)
 
 
 @router.get("", response_model=list[ConversationSummary])
@@ -75,6 +79,13 @@ async def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     await service.delete_conversation(conversation_id)
+    await audit.record(
+        "conversation.deleted",
+        module="asistente",
+        resource_type="conversation",
+        resource_id=conversation_id,
+        context={"title": conversation.get("title")},
+    )
     return Response(status_code=204)
 
 
@@ -83,14 +94,21 @@ async def send_message(
     conversation_id: str,
     body: SendMessageRequest,
     service: ConversationService = Depends(get_conversation_service),
-    username: str = Depends(require_auth),
+    user: CurrentUser = Depends(require_user),
 ):
     conversation = await service.get_conversation(conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    await audit.record(
+        "agent.message_sent",
+        module="asistente",
+        resource_type="conversation",
+        resource_id=conversation_id,
+        context={"length": len(body.content)},
+    )
 
     async def event_generator():
-        async for event in service.process_message(conversation_id, body.content, username=username):
+        async for event in service.process_message(conversation_id, body.content, user=user):
             yield {"event": event["event"], "data": json.dumps(event)}
 
     return EventSourceResponse(event_generator())

@@ -42,9 +42,12 @@ class Settings(BaseSettings):
     source_cache_ttl_seconds: int = 300
     # Compare each alarms download with the source's indicators page (see SourceConfig).
     source_reconcile_indicators: bool = True
-    # Address/username/password saved from the app (Configuración > Fuente de datos) override
-    # the SOURCE_* values above; stored here with 0600 permissions (see source_settings_store.py).
-    source_settings_path: Path = BACKEND_DIR / "source_settings.json"
+    # Values saved from the app (Fuente de Datos) live in Supabase (in_source_settings) and
+    # override the SOURCE_* values above, which only bootstrap a fresh install. The source
+    # password is stored there encrypted with this key (Fernet, 32 url-safe base64 bytes):
+    # generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+    # Losing or rotating it means re-entering the source password in Fuente de Datos.
+    source_secret_key: SecretStr = SecretStr("")
 
     sqlite_checkpoint_db_path: Path = BACKEND_DIR / "agent_checkpoints.sqlite3"
 
@@ -63,19 +66,16 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    # Conversations/messages/reports live in Supabase (tables prefixed "in_"),
-    # accessed server-side only via PostgREST + the anon key (never shipped to the
-    # frontend) -- RLS on those tables grants that key full access, scoped to just
-    # these tables so it can't touch anything else in a shared Supabase project.
+    # Supabase: Auth (sign-in, sessions) + Database (app data, configuration, audit).
+    # The anon/publishable key only identifies the project; every query runs with the
+    # signed-in user's access token and RLS decides what it may touch (membership of
+    # this app via in_users, admin role for admin areas). No service-role key here.
     supabase_url: str = ""
     supabase_anon_key: str = ""
 
-    # Single hardcoded operator login (not per-user Supabase Auth -- there's only
-    # ever one credential pair here) issuing a signed session JWT.
-    auth_username: str = "master"
-    auth_password: str = "123456"
-    auth_secret_key: str = "dev-insecure-change-me"
-    auth_token_ttl_hours: int = 24
+    # Trust X-Forwarded-For for the client IP recorded in the audit log -- only when the
+    # backend sits behind a reverse proxy that sets it (otherwise clients could forge it).
+    trust_proxy_headers: bool = False
 
 
 @lru_cache

@@ -18,6 +18,18 @@ ALARMS_EMPTY_EXPORT_PATH = FIXTURES_DIR / "alarmas_export_vacio.csv"
 # Synthetic data inside the exact markup of the live indicators page (indicadores.php).
 INDICATORS_FIXTURE_PATH = FIXTURES_DIR / "indicadores_albatrus_sintetico.html"
 MITRE_CATALOG_PATH = PROJECT_ROOT / "data" / "mitre_tactics.json"
+
+# Test identities: bearer tokens the fake Supabase Auth verifier accepts (see _fake_supabase_auth).
+ADMIN_AUTH_ID = "11111111-1111-4111-8111-111111111111"
+OPERATOR_AUTH_ID = "22222222-2222-4222-8222-222222222222"
+OUTSIDER_AUTH_ID = "33333333-3333-4333-8333-333333333333"  # valid Supabase user of ANOTHER app
+TEST_TOKENS = {
+    "token-admin": {"sub": ADMIN_AUTH_ID, "email": "admin@soc.test"},
+    "token-operator": {"sub": OPERATOR_AUTH_ID, "email": "operador@soc.test"},
+    "token-outsider": {"sub": OUTSIDER_AUTH_ID, "email": "otra-app@example.test"},
+}
+# A fixed Fernet key so encrypted source passwords round-trip inside a test run.
+TEST_SOURCE_SECRET_KEY = "dGVzdC1rZXktZm9yLXNvdXJjZS1wYXNzd29yZHMtMDE="
 COMPANIES_FILE_PATH = PROJECT_ROOT / "data" / "companies.json"
 
 
@@ -40,8 +52,13 @@ def isolated_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("SQLITE_APP_DB_PATH", str(tmp_path / "app.sqlite3"))
     monkeypatch.setenv("SQLITE_CHECKPOINT_DB_PATH", str(tmp_path / "checkpoints.sqlite3"))
     monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
-    # never read or write the real backend/source_settings.json from a test
-    monkeypatch.setenv("SOURCE_SETTINGS_PATH", str(tmp_path / "source_settings.json"))
+    # never reach the real Supabase project (its URL/key in backend/.env) from a test
+    monkeypatch.setenv("SUPABASE_URL", "https://supabase.test")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon-test-key")
+    monkeypatch.setenv("SOURCE_SECRET_KEY", TEST_SOURCE_SECRET_KEY)
+    # and never pick up the real source address/credentials from backend/.env
+    for name in ("SOURCE_BASE_URL", "SOURCE_USERNAME", "SOURCE_PASSWORD"):
+        monkeypatch.setenv(name, "")
 
     get_settings.cache_clear()
     yield get_settings()
@@ -107,16 +124,60 @@ def _reset_sse_starlette_exit_event():
 
 
 @pytest.fixture(autouse=True)
-def _reset_login_rate_limit():
-    """See app.auth.reset_login_rate_limit -- the limiter's attempt log is
-    process-global, so without this, tests accumulate real login attempts
-    against each other and start tripping 429 partway through a full run."""
+def _reset_process_state():
+    """Rate limiters, caches and the observability buffer are process-global: reset
+    them so tests never see each other's attempts, members or events."""
+    from app.api.me import reset_auth_event_rate_limit
     from app.api.source_settings import reset_source_settings_rate_limit
-    from app.auth import reset_login_rate_limit
+    from app.auth import clear_membership_cache
+    from app.services.observability import get_observability
+    from app.services.source_settings_service import invalidate_cache
 
-    reset_login_rate_limit()
+    reset_auth_event_rate_limit()
     reset_source_settings_rate_limit()
+    clear_membership_cache()
+    invalidate_cache()
+    get_observability().clear()
     yield
+    invalidate_cache()
+
+
+class FakeTokenVerifier:
+    """Stands in for Supabase Auth's JWKS verification: accepts the TEST_TOKENS."""
+
+    def verify(self, token: str) -> dict:
+        from app.auth import AuthError
+
+        if token == "token-expired":
+            raise AuthError("session_expired", "Tu sesión expiró. Inicia sesión de nuevo.")
+        claims = TEST_TOKENS.get(token)
+        if claims is None:
+            raise AuthError("invalid_token", "Sesión no válida. Inicia sesión de nuevo.")
+        return {**claims, "aud": "authenticated", "role": "authenticated"}
+
+
+@pytest.fixture(autouse=True)
+def _fake_supabase_auth(monkeypatch):
+    monkeypatch.setattr("app.auth.get_token_verifier", lambda: FakeTokenVerifier())
+
+
+def _matches(row: dict, column: str, op_value: str) -> bool:
+    op, _, value = op_value.partition(".")
+    current = row.get(column)
+    if op == "eq":
+        return str(current) == value if not isinstance(current, bool) else str(current).lower() == value.lower()
+    if op in ("gte", "lte"):
+        if current is None:
+            return False
+        return str(current) >= value if op == "gte" else str(current) <= value
+    if op in ("like", "ilike"):
+        import fnmatch
+
+        text, pattern = str(current or ""), value
+        if op == "ilike":
+            text, pattern = text.lower(), pattern.lower()
+        return fnmatch.fnmatchcase(text, pattern)
+    raise NotImplementedError(op)
 
 
 class _FakeSupabaseTable:
@@ -159,6 +220,36 @@ class _FakeSupabaseTable:
     def delete(self, filters):
         self.rows = [r for r in self.rows if not all(r.get(k) == v for k, v in filters.items())]
 
+    def query(self, params):
+        """PostgREST-style operators used by the app (eq/gte/lte/like/ilike, or=(...ilike...),
+        order, limit, offset; select= is ignored -- full rows are returned)."""
+        rows = [dict(r) for r in self.rows]
+        order = limit = None
+        offset = 0
+        for key, value in params:
+            if key == "select":
+                continue
+            if key == "order":
+                order = value
+            elif key == "limit":
+                limit = int(value)
+            elif key == "offset":
+                offset = int(value)
+            elif key == "or":
+                clauses = [c.split(".", 1) for c in value.strip("()").split(",")]
+                rows = [r for r in rows if any(_matches(r, col, opv) for col, opv in clauses)]
+            else:
+                rows = [r for r in rows if _matches(r, key, value)]
+        if order:
+            for clause in reversed(order.split(",")):
+                field, _, direction = clause.strip().partition(".")
+                rows.sort(key=lambda r, f=field: (r.get(f) is None, r.get(f) or ""), reverse=(direction == "desc"))
+        total = len(rows)
+        rows = rows[offset:]
+        if limit is not None:
+            rows = rows[:limit]
+        return rows, total
+
 
 class FakeSupabase:
     def __init__(self):
@@ -179,6 +270,43 @@ class FakeSupabase:
     async def delete(self, table, filters):
         self.table(table).delete(filters)
 
+    async def insert_quiet(self, table, data):
+        row = dict(data)
+        row.setdefault("id", __import__("uuid").uuid4().hex)
+        row.setdefault("occurred_at", __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
+        self.table(table).insert(row)
+
+    async def query(self, table, params, *, count=False):
+        rows, total = self.table(table).query(params)
+        return rows, (total if count else None)
+
+    async def upsert(self, table, rows, on_conflict="id"):
+        stored = []
+        for data in rows:
+            existing = self.table(table).update({on_conflict: data[on_conflict]}, data)
+            stored.append(existing if existing is not None else self.table(table).insert(data))
+        return stored
+
+    async def rpc(self, function, args, *, as_anon=False):
+        if function != "in_log_auth_event":
+            raise NotImplementedError(function)
+        await self.insert_quiet(
+            "in_audit_log",
+            {
+                "action": args["p_action"],
+                "module": "auth",
+                "result": "denied" if args["p_action"] == "auth.access_denied" else "failure",
+                "actor_auth_id": None,
+                "actor_email": args.get("p_email"),
+                "context": {"reason": args.get("p_reason"), "reported_by": "client"},
+                "ip": args.get("p_ip"),
+            },
+        )
+
+    def audit(self, action: str | None = None) -> list[dict]:
+        rows = self.table("in_audit_log").rows
+        return [r for r in rows if action is None or r["action"] == action]
+
 
 @pytest.fixture
 def fake_supabase(monkeypatch, isolated_settings):
@@ -193,6 +321,14 @@ def fake_supabase(monkeypatch, isolated_settings):
     )
 
     fake = FakeSupabase()
+    fake.table("in_users").insert(
+        {"id": "user-admin", "username": "admin", "display_name": "Admin SOC", "role": "admin",
+         "auth_user_id": ADMIN_AUTH_ID, "email": "admin@soc.test", "is_active": True}
+    )
+    fake.table("in_users").insert(
+        {"id": "user-operator", "username": "operador", "display_name": "Operador SOC", "role": "operator",
+         "auth_user_id": OPERATOR_AUTH_ID, "email": "operador@soc.test", "is_active": True}
+    )
     fake.table("in_companies").insert({"id": "acme-corp", "name": "ACME Corp", "is_active": True})
     set_company_registry(CompanyRegistry(load_companies_from_supabase))
     fake.table("in_report_templates").insert(
@@ -202,6 +338,10 @@ def fake_supabase(monkeypatch, isolated_settings):
     monkeypatch.setattr(db, "insert", fake.insert)
     monkeypatch.setattr(db, "update", fake.update)
     monkeypatch.setattr(db, "delete", fake.delete)
+    monkeypatch.setattr(db, "insert_quiet", fake.insert_quiet)
+    monkeypatch.setattr(db, "query", fake.query)
+    monkeypatch.setattr(db, "upsert", fake.upsert)
+    monkeypatch.setattr(db, "rpc", fake.rpc)
     return fake
 
 
@@ -252,11 +392,10 @@ def api_client(fake_supabase, monkeypatch):
         yield c
 
 
-def auth_headers(client) -> dict:
-    res = client.post("/api/auth/login", json={"username": "master", "password": "123456"})
-    assert res.status_code == 200, res.text
-    token = res.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+def auth_headers(client=None, role: str = "admin") -> dict:
+    """Bearer header of a signed-in member ("admin" | "operator") or of a valid Supabase
+    user who is NOT a member of this app ("outsider")."""
+    return {"Authorization": f"Bearer token-{role}"}
 
 
 def parse_sse_events(text: str) -> list[dict]:

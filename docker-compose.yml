@@ -16,16 +16,13 @@ services:
       SOURCE_USERNAME: ${SOURCE_USERNAME:-}
       SOURCE_PASSWORD: ${SOURCE_PASSWORD:-}
       SOURCE_VERIFY_TLS: ${SOURCE_VERIFY_TLS:-true}
-      # Address/credentials changed from the app persist in the storage volume (0600).
-      SOURCE_SETTINGS_PATH: /app/storage/source_settings.json
+      # Encrypts the source password saved from Fuente de Datos (stored in Supabase).
+      SOURCE_SECRET_KEY: ${SOURCE_SECRET_KEY:?set SOURCE_SECRET_KEY (Fernet key)}
       SQLITE_CHECKPOINT_DB_PATH: /app/storage/agent_checkpoints.sqlite3
       REPORTS_DIR: /app/storage/generated_reports
       CORS_ORIGINS: '["http://localhost:5173"]'
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
-      AUTH_USERNAME: ${AUTH_USERNAME:-master}
-      AUTH_PASSWORD: ${AUTH_PASSWORD:-123456}
-      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY to a random value}
     volumes:
       - backend_storage:/app/storage
 
@@ -37,6 +34,9 @@ services:
       - "5173:5173"
     environment:
       VITE_PROXY_TARGET: http://backend:8000
+      # Supabase Auth in the browser: project URL + public anon/publishable key (never a service key).
+      VITE_SUPABASE_URL: ${SUPABASE_URL}
+      VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     depends_on:
       - backend
 

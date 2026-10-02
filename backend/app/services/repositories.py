@@ -3,10 +3,10 @@ from app.services.db import new_id, now_iso
 
 
 class ConversationRepository:
-    async def create(self, title: str | None = None) -> dict:
+    async def create(self, title: str | None = None, *, created_by: str | None = None) -> dict:
         return await db.insert(
             "in_conversations",
-            {"id": new_id("conv"), "title": title, "is_pinned": False, "created_at": now_iso()},
+            {"id": new_id("conv"), "title": title, "is_pinned": False, "created_by": created_by, "created_at": now_iso()},
         )
 
     async def get(self, conversation_id: str) -> dict | None:
@@ -93,6 +93,9 @@ class ReportRepository:
         row["specification"] = row.pop("specification_json")
         return row
 
+    async def list_recent(self, limit: int = 20) -> list[dict]:
+        return await db.select("in_reports", order="created_at.desc", limit=limit)
+
     async def get_report(self, report_id: str) -> dict | None:
         rows = await db.select("in_reports", filters={"id": report_id})
         return rows[0] if rows else None
@@ -131,14 +134,3 @@ class ReportRepository:
 class ReportTemplateRepository:
     async def list_active(self) -> list[dict]:
         return await db.select("in_report_templates", filters={"is_active": True}, order="name.asc")
-
-
-class UserRepository:
-    """Reads in_users -- seeded with a single 'master' row today (see
-    supabase_schema.sql). Not Supabase Auth: backs QUALITY_OBSERVABILITY.md's
-    "¿qué usuario lo generó?" audit question, attributing executions to the
-    authenticated username without assuming multi-user auth exists yet."""
-
-    async def get_by_username(self, username: str) -> dict | None:
-        rows = await db.select("in_users", filters={"username": username})
-        return rows[0] if rows else None

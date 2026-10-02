@@ -4,37 +4,57 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import auth
 from app.agents.graph import get_compiled_graph
-from app.api import conversations, health, reference_data, reports, source_settings
+from app.api import (
+    audit_log,
+    conversations,
+    health,
+    me,
+    observability,
+    reference_data,
+    reports,
+    source_settings,
+)
 from app.config.settings import get_settings
-from app.ingestion.source_settings_store import effective_source_config
 from app.providers.factory import get_data_provider
+from app.security.middleware import RequestContextMiddleware
+from app.services import source_settings_service
 from app.services.conversation_service import ConversationService
 
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging() -> None:
+    """INFO for the app's own loggers (app.audit / app.ops lines included), with level names
+    the operators can grep for. uvicorn keeps configuring its own loggers."""
+    app_logger = logging.getLogger("app")
+    if app_logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    app_logger.addHandler(handler)
+    app_logger.setLevel(logging.INFO)
+    # propagates to the root logger too (no handler there by default, so no duplicates)
+
+
+_configure_logging()
+
+
 def _check_production_security(settings) -> None:
-    """Loud, non-fatal warnings when running with insecure defaults in
-    "production" (SECURITY_REVIEW.md production checklist) -- deliberately
-    doesn't refuse to start: this project has one operator, not a fleet of
-    unattended deployments, so a hard crash would just as likely lock out a
-    legitimate admin mid-incident as stop a real misconfiguration. Loud logs
-    are the right tradeoff here."""
+    """Loud, non-fatal warnings when running with an insecure or incomplete setup
+    (SECURITY_REVIEW.md checklist). Deliberately doesn't refuse to start: an admin
+    must still be able to sign in and fix what can be fixed from the app."""
+    if not settings.supabase_url or not settings.supabase_anon_key:
+        logger.critical(
+            "SECURITY: SUPABASE_URL / SUPABASE_ANON_KEY no están configuradas -- nadie podrá iniciar sesión."
+        )
+    if not settings.source_secret_key.get_secret_value().strip():
+        logger.warning(
+            "SOURCE_SECRET_KEY no está configurada: la contraseña de la fuente no se podrá guardar cifrada "
+            "desde Fuente de Datos."
+        )
     if settings.environment != "production":
         return
-    if settings.auth_secret_key == "dev-insecure-change-me":
-        logger.critical(
-            "SECURITY: running with environment=production but AUTH_SECRET_KEY is still the "
-            "insecure default -- JWTs are forgeable by anyone who knows this. Set a real random "
-            "secret in backend/.env."
-        )
-    if settings.auth_password == "123456":
-        logger.critical(
-            "SECURITY: running with environment=production but AUTH_PASSWORD is still the "
-            "default '123456'. Change AUTH_USERNAME/AUTH_PASSWORD in backend/.env."
-        )
     if any("localhost" in origin for origin in settings.cors_origins):
         logger.warning(
             "SECURITY: running with environment=production but CORS_ORIGINS still includes a "
@@ -49,10 +69,16 @@ def _check_data_source(settings) -> None:
     attempt also fails with the same explicit message)."""
     if settings.data_provider != "http":
         return
-    config = effective_source_config(settings)
+    # Startup has no signed-in user, so only the backend/.env bootstrap values are visible here;
+    # what was saved from Fuente de Datos is applied on the first request.
+    config = source_settings_service.to_source_config(source_settings_service.settings_from_env(settings), settings)
     problems = config.problems()
     if problems:
-        logger.error("Fuente de datos HTTP sin configurar en backend/.env: %s", "; ".join(problems))
+        logger.info(
+            "Fuente de datos: backend/.env no trae valores iniciales completos (%s); se usará lo configurado "
+            "en Fuente de Datos.",
+            "; ".join(problems),
+        )
         return
     logger.info(
         "Fuente de datos: %s (usuario configurado, TLS %s)",
@@ -92,20 +118,24 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="AI Security Report Generator", lifespan=lifespan)
 
+    app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
     )
 
     app.include_router(health.router)
-    app.include_router(auth.router)
+    app.include_router(me.router)
     app.include_router(conversations.router)
     app.include_router(reports.router)
     app.include_router(reference_data.router)
     app.include_router(source_settings.router)
+    app.include_router(audit_log.router)
+    app.include_router(observability.router)
 
     return app
 

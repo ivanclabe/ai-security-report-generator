@@ -89,7 +89,7 @@ class SourceConfig:
         problems = self.problems()
         if problems:
             raise SourceConfigError(
-                "La fuente de datos no está configurada (Configuración > Fuente de datos, o backend/.env): "
+                "La fuente de datos no está configurada (Fuente de Datos en la app, o backend/.env): "
                 + "; ".join(problems)
                 + "."
             )

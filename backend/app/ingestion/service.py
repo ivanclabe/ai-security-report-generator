@@ -18,6 +18,12 @@ source's own indicators page (indicadores.php) states how many alarms it counts
 for the same company/period. Every fresh alarms download is reconciled against
 it: an empty export while the dashboard reports alarms stops the report (instead
 of producing an empty one), and any other difference is reported as a warning.
+
+Configuration and observability stay outside this layer: `config_provider`
+hands it the current SourceConfig before every acquisition (address and
+credentials can change at runtime, from the app), and `on_event` receives
+neutral facts (what was fetched, how long it took, whether it failed) that the
+app turns into observability events.
 """
 import asyncio
 import hashlib
@@ -74,6 +80,22 @@ class AlarmBatch:
 
 
 FetchListener = Callable[[AlarmBatch], Awaitable[None]]
+ConfigProvider = Callable[[], Awaitable[SourceConfig]]
+
+
+@dataclass(frozen=True)
+class SourceEvent:
+    name: str  # "alarms_fetched" | "alarms_failed" | "indicators_fetched" | "indicators_failed"
+    ok: bool
+    host: str
+    company: str
+    duration_ms: int
+    detail: str = ""
+    rows: int | None = None
+    warnings: int = 0
+
+
+EventListener = Callable[[SourceEvent], Awaitable[None]]
 
 
 class AlarmAcquisitionService:
@@ -84,9 +106,13 @@ class AlarmAcquisitionService:
         *,
         clock: Callable[[], float] = time.monotonic,
         on_fetch: FetchListener | None = None,
+        config_provider: ConfigProvider | None = None,
+        on_event: EventListener | None = None,
         max_entries: int = 32,
     ):
         self._client = client
+        self._config_provider = config_provider
+        self._on_event = on_event
         self._mitre_catalog = mitre_catalog
         self._clock = clock
         self._on_fetch = on_fetch
@@ -104,7 +130,25 @@ class AlarmAcquisitionService:
         self._batches.clear()
         self._indicators.clear()
 
+    async def _sync_config(self) -> None:
+        """Pick up address/credential changes made from the app since the last request."""
+        if self._config_provider is None:
+            return
+        config = await self._config_provider()
+        if config != self._client.config:
+            logger.info("Fuente: configuración actualizada (%s); se descarta la sesión y la caché", config.host)
+            await self.reconfigure(config)
+
+    async def _emit(self, event: SourceEvent) -> None:
+        if self._on_event is None:
+            return
+        try:
+            await self._on_event(event)
+        except Exception:  # noqa: BLE001 - observing must never break acquiring
+            logger.warning("No se pudo registrar el evento de la fuente %s", event.name, exc_info=True)
+
     async def get_batch(self, company: Company, start: datetime, end: datetime) -> AlarmBatch:
+        await self._sync_config()
         key = (company.id, start.strftime(_KEY_FORMAT), end.strftime(_KEY_FORMAT))
         cached = self._batches.get(key)
         if cached is not None and self._clock() < cached.expires_at:
@@ -115,7 +159,20 @@ class AlarmAcquisitionService:
             cached = self._batches.get(key)  # another task may have fetched while we waited
             if cached is not None and self._clock() < cached.expires_at:
                 return cached
-            batch = await self._acquire(company, start, end)
+            started = self._clock()
+            try:
+                batch = await self._acquire(company, start, end)
+            except SourceError as exc:
+                await self._emit(
+                    SourceEvent("alarms_failed", False, self._client.config.host, company.name,
+                                int((self._clock() - started) * 1000), detail=str(exc))
+                )
+                raise
+            await self._emit(
+                SourceEvent("alarms_fetched", True, self._client.config.host, company.name,
+                            int((self._clock() - started) * 1000), rows=batch.rows_received,
+                            warnings=len(batch.warnings))
+            )
             batch.expires_at = self._clock() + self._client.config.cache_ttl_seconds
             self._batches[key] = batch
             self._batches.move_to_end(key)
@@ -131,6 +188,7 @@ class AlarmAcquisitionService:
 
     async def get_indicators(self, company: Company, start: date, end: date) -> SourceIndicators:
         """The source's indicators page for one company/period (cached like the alarms)."""
+        await self._sync_config()
         key = (company.id, start.isoformat(), end.isoformat())
         cached = self._indicators.get(key)
         if cached is not None and self._clock() < cached[0]:
@@ -141,7 +199,19 @@ class AlarmAcquisitionService:
             if cached is not None and self._clock() < cached[0]:
                 return cached[1]
             request = build_indicators_request(self._client.config, company.request_client_name, start, end)
-            indicators = parse_indicators_page((await self._client.fetch(request)).content)
+            started = self._clock()
+            try:
+                indicators = parse_indicators_page((await self._client.fetch(request)).content)
+            except SourceError as exc:
+                await self._emit(
+                    SourceEvent("indicators_failed", False, self._client.config.host, company.name,
+                                int((self._clock() - started) * 1000), detail=str(exc))
+                )
+                raise
+            await self._emit(
+                SourceEvent("indicators_fetched", True, self._client.config.host, company.name,
+                            int((self._clock() - started) * 1000), rows=indicators.total_alarms)
+            )
 
             if indicators.client is None:
                 indicators.warnings.append("La página de indicadores no indica qué cliente está mostrando.")
