@@ -238,9 +238,18 @@ class SourceClient:
                 else httpx.USE_CLIENT_DEFAULT
             )
             response = await client.get(url, params=params, auth=auth)
+        except httpx.ConnectTimeout as exc:
+            # never got a TCP connection: almost always VPN/network, not a slow query
+            raise SourceUnavailableError(
+                f"Tiempo de espera agotado ({self._config.timeout_seconds:g}s) intentando conectar con {host}: el "
+                "servidor no es alcanzable desde el backend. Verifica la conexión a la VPN/red del cliente y la "
+                "dirección configurada en Fuente de Datos."
+            ) from exc
         except httpx.TimeoutException as exc:
             raise SourceUnavailableError(
-                f"Tiempo de espera agotado ({self._config.timeout_seconds:g}s) consultando {host}."
+                f"Tiempo de espera agotado ({self._config.timeout_seconds:g}s) consultando {host}: el servidor "
+                "aceptó la conexión pero no terminó de responder. Prueba con un rango de fechas más corto o aumenta "
+                "SOURCE_TIMEOUT_SECONDS."
             ) from exc
         except httpx.ConnectError as exc:
             if self._is_certificate_error(exc):

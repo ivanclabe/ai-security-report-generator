@@ -252,6 +252,17 @@ async def test_timeout_message_names_the_host_and_the_limit(server):
     with pytest.raises(SourceUnavailableError) as excinfo:
         await client.fetch(_alarms(client))
     assert "7s" in str(excinfo.value) and "source.test" in str(excinfo.value)
+    assert "rango de fechas" in str(excinfo.value)
+
+
+async def test_connect_timeout_points_to_the_vpn_not_to_a_slow_query(server):
+    server.raise_next.append(httpx.ConnectTimeout("timed out"))
+    client = build_client(server, timeout_seconds=7)
+
+    with pytest.raises(SourceUnavailableError) as excinfo:
+        await client.fetch(_alarms(client))
+    message = str(excinfo.value)
+    assert "7s" in message and "conectar" in message and "VPN" in message
 
 
 async def test_unreachable_host_suggests_checking_vpn_and_the_configured_address(server):
