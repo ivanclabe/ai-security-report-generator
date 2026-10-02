@@ -1,23 +1,38 @@
-"""Report template registry (see ARCHITECTURE_TARGET.md §3.1 and §9 -- a plain
-callable registry, not a class hierarchy or DSL: there is exactly one template
-today, and generalizing the abstraction before a second real template exists
-would be guessing at a shape nobody has asked for yet.
+"""Report template registry + the "Informe de Gestión CSOC" template.
 
-Adding a new report type later means writing one function with this same
-signature and calling register_template() -- nothing else in the pipeline
-(specification.py, the agent, the future deterministic endpoint) changes.
+A template turns the collected data into the report's sections. The CSOC
+template reproduces the structure and presentation of the client's own
+reference report (TGS TPS Informe de Gestión CSOC, form GCB-FR-14): the same
+chapters and subsections, in the same order, with the same kinds of tables
+and charts. Its CONTENT comes exclusively from the data: every figure, table
+row and chart value is computed in csoc_facts.py from the alarms of the
+period; where the reference shows something the data sources cannot support
+(asset inventory, console screenshots, vulnerability or brand monitoring
+feeds, IP reputation), the section says so explicitly instead of filling it.
+The LLM writes nothing here -- only the recommendations (chapter 11), which
+validation.py checks against these same facts.
+
+Adding a report type = one more builder function + register_template().
 """
-from typing import Callable
+from collections.abc import Callable
+from datetime import date, datetime
 
-from app.schemas.report_spec import Section, SignificantAlert, SimpleTable, Subsection
-from app.services.report.narrative import (
-    DISCONNECTED_CATEGORY,
-    EMAIL_TYPE,
-    NETWORK_TYPE,
-    SIEM_TYPE,
-    THREAT_INTEL_TYPES,
-    ReportNarrative,
+from app.schemas.report_spec import (
+    AlertBoxBlock,
+    BulletsBlock,
+    Cell,
+    ChartBlock,
+    ChartSeries,
+    MinorHeadingBlock,
+    NoticeBlock,
+    ParagraphBlock,
+    Section,
+    SideBySideBlock,
+    Subsection,
+    TableBlock,
 )
+from app.services.report import csoc_facts as f
+from app.services.report.narrative import ReportNarrative
 
 TemplateBuilder = Callable[[dict, ReportNarrative], list[Section]]
 
@@ -36,242 +51,513 @@ def get_template(key: str | None) -> TemplateBuilder:
     return _REGISTRY[resolved]
 
 
-def _dominant_risk(alerts: list[dict]) -> str:
-    from collections import Counter
+# ---- presentation constants of the reference report -------------------------------------------
 
-    counts = Counter(a["risk_level"] for a in alerts)
-    return counts.most_common(1)[0][0] if counts else "-"
+HEADER = "0B5D33"
+LIGHT_GREEN = "E2EFD9"
+GRAY = "D9D9D9"
+WHITE = "FFFFFF"
+RISK_FILL = {"Critico": "C00000", "Alto": "FF0000", "Medio": "FFC000", "Bajo": "00B050"}
+BAR_DARK = "0A3D1C"
+TEAL = "00706E"
+AMBER = "FFC000"
 
-
-def _source_events_table(alerts: list[dict], alert_type: str) -> SimpleTable | None:
-    subset = [a for a in alerts if a.get("alert_type") == alert_type]
-    if not subset:
-        return None
-    by_category: dict[str, list[dict]] = {}
-    for a in subset:
-        by_category.setdefault(a["category"], []).append(a)
-    rows = [
-        [category, _dominant_risk(items), str(len(items))]
-        for category, items in sorted(by_category.items(), key=lambda kv: len(kv[1]), reverse=True)
-    ]
-    return SimpleTable(headers=["Categoría", "Riesgo predominante", "Cantidad"], rows=rows)
-
-
-def _top_significant_alerts(alerts: list[dict], alert_type: str, n: int = 1) -> list[SignificantAlert]:
-    subset = [a for a in alerts if a.get("alert_type") == alert_type and not a.get("is_voided")]
-    subset.sort(key=lambda a: a.get("severity_score") or 0, reverse=True)
-    return [
-        SignificantAlert(
-            alarm_number=a["alarm_number"],
-            heading=a["alarm_number"],
-            description=a.get("description") or "",
-            response=a.get("response"),
-        )
-        for a in subset[:n]
-    ]
+SERVICE_ROW_LABEL = {
+    f.SIEM: "Número de alarmas revisadas por el equipo CSOC en correlacionador SIEM",
+    f.CORREO: "Número de alarmas revisadas por el equipo CSOC por el antígeno de correo",
+    f.RED: "Número de alarmas revisadas por el equipo CSOC por el antígeno de red",
+    f.INTEL: "Número de alarmas revisadas por el equipo CSOC de Inteligencia de amenazas",
+    f.ZABBIX: "Número de alarmas revisadas por el equipo CSOC de ZABBIX",
+}
+EVIDENCE = "Export de alarmas"
+NO_DATA = "N/D"
 
 
-def _disconnected_agents_table(alerts: list[dict]) -> SimpleTable | None:
-    """One row per distinct host, not per alarm -- the same server is often flagged
-    disconnected across several alarms in a month, and 'estado de agentes' should read
-    as current per-asset status, not a raw log of every individual disconnect event."""
-    subset = [a for a in alerts if a.get("category") == DISCONNECTED_CATEGORY]
-    if not subset:
-        return None
-    by_host: dict[str, dict] = {}
-    for a in subset:
-        hostnames = a.get("hostnames") or ["-"]
-        host = hostnames[0]
-        ips = a.get("source_ips") or a.get("external_ips") or ["-"]
-        entry = by_host.setdefault(host, {"ip": ips[0] if ips else "-", "alarm_numbers": []})
-        entry["alarm_numbers"].append(a["alarm_number"])
-    rows = [[host, info["ip"], ", ".join(info["alarm_numbers"])] for host, info in sorted(by_host.items())]
-    return SimpleTable(headers=["Servidor", "IP", "Alarmas asociadas"], rows=rows)
+def _h(text: str, colspan: int = 1) -> Cell:
+    return Cell(text=text, fill=HEADER, bold=True, color=WHITE, align="center", colspan=colspan)
 
 
-def _disconnected_agents_subsection(alerts: list[dict]) -> Subsection:
-    # No rows here is a real (positive) finding, not a missing-data-source case --
-    # keep it "available" and say so in prose, don't render it like the 7.1/7.2 notices.
-    table = _disconnected_agents_table(alerts)
-    return Subsection(
-        number="3.3",
-        title="Estado Agentes Monitoreados SIEM/EDR",
-        table=table,
-        summary=None if table is not None else "No se reportaron agentes desconectados en el período.",
+def _c(text, **kwargs) -> Cell:
+    return Cell(text=str(text), **kwargs)
+
+
+def _risk(risk: str, upper: bool = False) -> Cell:
+    if risk not in RISK_FILL:
+        return _c(risk or "-", align="center")
+    label = f.RISK_LABEL[risk]
+    return Cell(text=label.upper() if upper else label, fill=RISK_FILL[risk], color=WHITE, bold=True, align="center")
+
+
+def _join(items: list[str]) -> str:
+    return ", ".join(items[:-1]) + " y " + items[-1] if len(items) > 1 else "".join(items)
+
+
+def _notice(what: str) -> NoticeBlock:
+    return NoticeBlock(text=f"No se encontró evidencia suficiente en las fuentes de datos disponibles para {what}.")
+
+
+def _when(alert: dict) -> datetime:
+    return datetime.fromisoformat(str(alert.get("created_at") or alert.get("event_timestamp")).replace("Z", "+00:00"))
+
+
+def _day_month(d: datetime) -> str:
+    return f"{d.day:02d}-{f.MONTHS_SHORT[d.month - 1].lower()}"
+
+
+def _alert_box(alert: dict) -> AlertBoxBlock:
+    def joined(values) -> str:
+        return ", ".join(f._split(values)) or "N/A"
+
+    tactic = " ".join(p for p in (alert.get("mitre_tactic_id"), alert.get("mitre_tactic_name")) if p) or "N/A"
+    score = alert.get("severity_score")
+    description = " ".join((alert.get("description") or "").replace("_x000D_", " ").split())
+    response = " ".join((alert.get("response") or "").replace("_x000D_", " ").split()) or None
+    responded = alert.get("responded_at")
+    return AlertBoxBlock(
+        alarm_number=alert["alarm_number"],
+        description=description or "La alarma no registra descripción en la fuente.",
+        risk_level=alert.get("risk_level"),
+        event_info=[
+            ("Riesgo evento", f.RISK_LABEL.get(alert.get("risk_level"), alert.get("risk_level") or "N/A")),
+            ("Clasificación % riesgo", f"{score}%" if score is not None else "N/A"),
+            ("Host", joined(alert.get("hostnames"))),
+            ("Tipo", alert.get("alert_type") or "N/A"),
+            ("Alarma tipo", alert.get("category") or "N/A"),
+            ("Dirección IP origen", joined(alert.get("source_ips"))),
+            ("Táctica MITRE", tactic),
+            ("Fecha de creación", _when(alert).strftime("%d/%m/%Y %H:%M")),
+            ("Dirección IP destino", joined(alert.get("external_ips"))),
+        ],
+        recommendation=" ".join((alert.get("recommendations") or "").replace("_x000D_", " ").split()) or None,
+        response=response,
+        responded_at=datetime.fromisoformat(str(responded).replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+        if responded
+        else None,
     )
 
 
-def _risk_breakdown_table(metrics: dict) -> SimpleTable:
-    total = metrics.get("total_alerts", 0) - metrics.get("voided_alerts", 0)
+def _significant(alerts: list[dict], service: str, intro: str, empty: str) -> list:
+    alert = f.significant_alert(f.of_service(alerts, service))
+    if alert is None:
+        return [ParagraphBlock(text=empty)]
+    return [
+        ParagraphBlock(text=intro),
+        _alert_box(alert),
+        ParagraphBlock(text="Criterio de selección: alarma con el mayor puntaje de severidad del período en este servicio.",
+                       style="caption"),
+    ]
+
+
+# ---- chapters ------------------------------------------------------------------------------------------
+
+
+def _inventory(ctx: dict) -> Section:
+    alerts, facts, history = ctx["alerts"], ctx["facts"], ctx["history"]
+    months = history.get("months", [])
+    month_labels = [f.month_label(m["month"]) for m in months]
+    present = set().union(*(m["services"].keys() for m in months)) if months else set()
+    services = [s for s in f.ordered_services(present)]
+
+    # 3.1 -- last three months per service
+    available = [f.has_records(m) for m in months]
+    missing = [label for label, ok in zip(month_labels, available) if not ok]
     rows = []
-    for label, key in [("Crítico", "critico_alerts"), ("Alto", "alto_alerts"), ("Medio", "medio_alerts"), ("Bajo", "bajo_alerts")]:
-        count = metrics.get(key, 0)
-        pct = round((count / total) * 100, 1) if total else 0.0
-        rows.append([label, str(count), f"{pct}%"])
-    return SimpleTable(headers=["Nivel de riesgo", "Cantidad", "% Participación"], rows=rows)
+    for service in services + [f.ANULADAS]:
+        values = [m["services"].get(service, 0) if service != f.ANULADAS else m["voided"] for m in months]
+        if service == f.ANULADAS and not any(values):
+            continue
+        label = SERVICE_ROW_LABEL.get(service, "Anuladas" if service == f.ANULADAS else f"Número de alarmas de {service}")
+        # the trend compares the last two months only when the source has data for both
+        trend = f.trend_arrow(values[-2], values[-1]) if len(values) >= 2 and all(available[-2:]) else NO_DATA
+        rows.append([
+            _c(label),
+            *[_c(v if ok else NO_DATA, fill=LIGHT_GREEN, bold=True, align="center") for v, ok in zip(values, available)],
+            _c(trend, align="center", bold=True),
+            _c(EVIDENCE, align="center"),
+        ])
+    three_months_table = TableBlock(
+        header_rows=[
+            [_h("Comportamiento de alarmas"), _h("Valor", colspan=len(months)), _h("Tendencia"), _h("Evidencia")],
+            [_h(""), *[_h(label) for label in month_labels], _h(""), _h("")],
+        ],
+        rows=rows,
+        widths=[2.9, *([0.62] * len(months)), 0.85, 0.95],
+    )
+    variation_chart = ChartBlock(
+        chart="bar",
+        title=f"Indicador de variación alarmas mes a mes {ctx['company']}",
+        categories=[label for label, ok in zip(month_labels, available) if ok],
+        series=[ChartSeries(name="Total alarmas", values=[m["effective"] for m in months if f.has_records(m)],
+                            color=BAR_DARK)],
+        y_label="Cantidad de alarmas",
+        height_inches=3.0,
+    )
+
+    # 3.2 -- indicators of the period
+    by_service = facts["alarms_by_service"]
+    parts = [f"{s} ({by_service[s]})" for s in services if by_service.get(s)]
+    if facts["voided_alarms"]:
+        parts.append(f"Anuladas ({facts['voided_alarms']})")
+    total_label = f"total de {facts['effective_alarms']} alarmas"
+    indicators_text = (
+        f"Durante el período {ctx['period_phrase']} se registraron un total de {facts['total_alarms']} alarmas, "
+        f"distribuidas en {', '.join(parts[:-1]) + ' y ' + parts[-1] if len(parts) > 1 else ''.join(parts)}, "
+        f"para un {total_label} efectivamente procesadas para {ctx['company']}. "
+        f"Se observa que {facts['answered']} alarmas fueron atendidas y {facts['unanswered']} se encuentran sin respuesta."
+    )
+    responses = f.response_by_service(alerts)
+    response_chart = ChartBlock(
+        chart="grouped_bar",
+        title=f"Indicador alarmas {ctx['period_title']}",
+        categories=[r["service"].upper() for r in responses] + ["TOTAL"],
+        series=[
+            ChartSeries(name="Con respuesta", values=[r["answered"] for r in responses] + [facts["answered"]], color=TEAL),
+            ChartSeries(name="Sin respuesta", values=[r["unanswered"] for r in responses] + [facts["unanswered"]], color=AMBER),
+        ],
+        height_inches=3.1,
+    )
+    risk = facts["risk_distribution"]
+    risk_table = TableBlock(
+        header_rows=[[_h("RIESGO"), _h(ctx["month_name"]), _h("% Participación")]],
+        rows=[[_risk(r, upper=True), _c(risk[r], align="center"), _c(f"{facts['risk_percent'][r]}%", align="center")]
+              for r in f.RISK_ORDER],
+        widths=[2.9, 2.0, 1.4],
+    )
+    totals = {r: sum(m["risk"][r] for m in months if f.has_records(m)) for r in f.RISK_ORDER}
+    grand = sum(totals.values())
+    histogram = TableBlock(
+        header_rows=[[_h("RIESGO"), *[_h(f.month_label(m["month"], short=False)) for m in months], _h("TOTAL"),
+                      _h("% Global")]],
+        rows=[[_risk(r, upper=True),
+               *[_c(m["risk"][r] if f.has_records(m) else NO_DATA, align="center") for m in months],
+               _c(totals[r], fill=GRAY, bold=True, align="center"), _c(f"{f.pct(totals[r], grand)}%", align="center")]
+              for r in f.RISK_ORDER],
+        widths=[1.4, *([1.0] * len(months)), 1.0, 1.0],
+    )
+
+    # 3.3 -- agents reported disconnected (from the alarms; the EDR inventory itself is not in the data)
+    hosts = f.disconnected_agents(alerts)
+    agents_blocks: list = [_notice("reportar el inventario de agentes del SIEM/EDR (equipos activos, inactivos e incompatibles)")]
+    if hosts:
+        agents_blocks += [
+            ParagraphBlock(text=f"Se relacionan a continuación los {len(hosts)} servidores reportados con agente desconectado "
+                                f"en las alarmas del período, para su validación interna:"),
+            TableBlock(
+                header_rows=[[_h("SERVIDOR"), _h("IP"), _h("OBSERVACIÓN")]],
+                rows=[[_c(h["host"]), _c(h["ip"]), _c(f"Agente reportado desconectado / Última alarma {_day_month(h['last'])}",
+                                                         align="center")] for h in hosts],
+                widths=[1.7, 1.6, 3.1],
+            ),
+            ParagraphBlock(
+                text="Las desconexiones fueron reportadas con las alarmas "
+                     + f.compress_alarm_numbers(sorted({n for h in hosts for n in h["alarms"]}, key=f._alarm_sort_key,
+                                                       reverse=True)) + "."
+            ),
+        ]
+    else:
+        agents_blocks.append(ParagraphBlock(text="No se reportaron alarmas de agentes desconectados en el período."))
+
+    return Section(
+        number="3",
+        title="Inventario Monitoreado",
+        blocks=[
+            ParagraphBlock(text=f"Durante el período {ctx['period_phrase']} se realizó el monitoreo de {ctx['company']} a "
+                                f"través de los servicios {', '.join(services) or 'del SOC'}, con {facts['total_alarms']} "
+                                f"alarmas registradas en las fuentes de datos."),
+            _notice("reportar las cifras de equipos activos descubiertos y vigilados en el EDR y en el SIEM, ni la "
+                    "conectividad del firewall"),
+        ],
+        subsections=[
+            Subsection(number="3.1", title="Estadística de Alarmas Últimos Tres Meses", blocks=[
+                ParagraphBlock(text="Se relaciona el estadístico de alarmas durante los últimos tres meses, distribuidas de la "
+                                    "siguiente manera:"),
+                three_months_table,
+                *([NoticeBlock(text=f"Las fuentes de datos no devolvieron alarmas para {_join(missing)}; esos meses se "
+                                    f"muestran como {NO_DATA} y no se incluyen en la tendencia, el gráfico ni los totales.")]
+                  if missing else []),
+                ParagraphBlock(text=f"Se muestra el índice de variación mensual sobre el total de alarmas efectivas de "
+                                    f"{ctx['company']} (sin contar las anuladas) reportadas en los últimos 3 meses:"),
+                variation_chart,
+            ]),
+            Subsection(number="3.2", title="Indicadores Alarmas", blocks=[
+                ParagraphBlock(text=indicators_text, bold_terms=[total_label]),
+                response_chart,
+                ParagraphBlock(
+                    text=f"Durante el período {ctx['period_phrase']}, se notificaron {facts['effective_alarms']} alarmas, "
+                         "debido a que las alarmas anuladas no se tienen en cuenta para el análisis de estadísticas del "
+                         "informe; su clasificación de riesgo es la siguiente:",
+                    bold_terms=[f"{facts['effective_alarms']} alarmas"],
+                ),
+                risk_table,
+                ParagraphBlock(text="Histograma de la clasificación de las alarmas de acuerdo con el nivel de criticidad, "
+                                    "durante los últimos tres meses:"),
+                histogram,
+            ]),
+            Subsection(number="3.3", title="Estado Agentes Monitoreados SIEM/EDR", blocks=agents_blocks),
+        ],
+    )
 
 
-def _trend_table(trends_3mo: list[dict]) -> SimpleTable:
-    rows = [[t["period"], str(t["total_alerts"]), str(t["critico_alerts"])] for t in trends_3mo]
-    return SimpleTable(headers=["Período", "Total alarmas", "Críticas"], rows=rows)
+def _siem(ctx: dict) -> Section:
+    siem = f.effective(f.of_service(ctx["alerts"], f.SIEM))
+    categories = f.categories_of(siem)
+    blocks_41: list
+    if siem:
+        top = categories[:8]
+        highlights = ", ".join(f"{n} de {c.lower()}" for c, n, _ in top[:3])
+        blocks_41 = [
+            ParagraphBlock(text="Durante el período monitoreado se identificaron diferentes alarmas, relacionando a "
+                                "continuación los eventos más significativos:"),
+            ChartBlock(chart="hbar", title="ALARMAS GENERADAS", categories=[c for c, _, _ in top],
+                       series=[ChartSeries(name="Alarmas", values=[n for _, n, _ in top], color=TEAL)],
+                       height_inches=max(2.2, 0.55 * len(top) + 1.0)),
+            MinorHeadingBlock(text="Detalle de alarmas"),
+            ParagraphBlock(text=f"Durante el período {ctx['period_phrase']} se registraron un total de {len(siem)} alarmas "
+                                f"de SIEM, destacándose {highlights}."),
+            TableBlock(header_rows=[[_h("Servicio"), _h("Riesgo"), _h("SIEM")]],
+                       rows=[[_c(c), _risk(r), _c(n, align="center")] for c, n, r in categories],
+                       widths=[2.9, 2.0, 1.4]),
+        ]
+    else:
+        blocks_41 = [ParagraphBlock(text="No se registraron alarmas de SIEM en el período.")]
+    return Section(
+        number="4",
+        title="Gestión Alarmas SIEM",
+        subsections=[
+            Subsection(number="4.1", title="Eventos SIEM", blocks=blocks_41),
+            Subsection(number="4.2", title="Alarma Significativa", blocks=_significant(
+                ctx["alerts"], f.SIEM, f"Durante el período {ctx['period_phrase']} se observó la siguiente alarma significativa:",
+                "No se registraron alarmas de SIEM en el período.")),
+        ],
+    )
 
 
-def _email_rarity_table(entries: list[dict]) -> SimpleTable:
-    rows = [[e["email"], str(e["count"])] for e in entries[:10]]
-    return SimpleTable(headers=["Usuario", "Cantidad recibidos"], rows=rows)
+def _paired_rows(categories: list[tuple[str, int, str]], total_label: str, total: int) -> list[list[Cell]]:
+    half = (len(categories) + 1) // 2
+    left, right = categories[:half], categories[half:]
+    rows = []
+    for i in range(half):
+        lc, ln, _ = left[i]
+        row = [_c(lc), _c(ln, align="center")]
+        if i < len(right):
+            rc, rn, _ = right[i]
+            row += [_c(rc), _c(rn, align="center")]
+        else:
+            row += [_c(""), _c("")]
+        rows.append(row)
+    rows.append([_c(""), _c(""), _c(total_label, fill=GRAY, bold=True, align="center"),
+                 _c(total, fill=GRAY, bold=True, align="center")])
+    return rows
 
 
-def _data_leak_table(entries: list[dict]) -> SimpleTable:
-    rows = [[e["sender"], str(e["count"])] for e in entries[:10]]
-    return SimpleTable(headers=["Remitente", "Cantidad"], rows=rows)
+def _network(ctx: dict) -> Section:
+    red = f.effective(f.of_service(ctx["alerts"], f.RED))
+    categories = f.categories_of(red)
+    critical = f.highest_criticality(red)
+    events_blocks: list = []
+    if red:
+        events_blocks = [
+            ParagraphBlock(text=f"A continuación, se relacionan los eventos reportados durante el período "
+                                f"{ctx['period_phrase']} sobre el antígeno de red:"),
+            TableBlock(header_rows=[[_h("Eventos"), _h("Alarmas"), _h("Eventos"), _h("Alarmas")]],
+                       rows=_paired_rows(categories, "TOTAL ALARMAS ANTÍGENO RED", len(red)),
+                       widths=[2.2, 0.75, 2.6, 0.75], font_size=10),
+        ]
+        if critical:
+            events_blocks += [
+                MinorHeadingBlock(text="Mayor nivel criticidad"),
+                TableBlock(header_rows=[[_h("Eventos"), _h("Riesgo"), _h("Alarmas")]],
+                           rows=[[_c(c), _risk(r), _c(n, align="center")] for c, r, n in critical],
+                           widths=[2.9, 2.0, 1.4]),
+            ]
+    else:
+        events_blocks = [ParagraphBlock(text="No se registraron alarmas del antígeno de red en el período.")]
+    return Section(
+        number="5",
+        title="Antígeno de Red",
+        blocks=[
+            ParagraphBlock(text=f"Durante el período {ctx['period_phrase']}, el antígeno de red reportó {len(red)} alarmas "
+                                "efectivas para su gestión por el equipo CSOC."),
+            _notice("incluir la vista del panel de análisis del antígeno de red"),
+        ],
+        subsections=[
+            Subsection(number="5.1", title="Eventos Antígeno de Red", blocks=events_blocks),
+            Subsection(number="5.2", title="Alarmas Significativas Antígeno de Red", blocks=_significant(
+                ctx["alerts"], f.RED, f"Se relaciona a continuación una alarma significativa durante el período "
+                                      f"{ctx['period_phrase']}:",
+                "No se registraron alarmas del antígeno de red en el período.")),
+        ],
+    )
 
 
-def _ip_table(entries: list[dict]) -> SimpleTable:
-    rows = [[e["ip"], str(e["count"]), e["alarm_numbers"][0] if e["alarm_numbers"] else "-"] for e in entries]
-    return SimpleTable(headers=["IP", "Alarmas", "Ejemplo de alarma"], rows=rows)
+def _email(ctx: dict) -> Section:
+    alerts = ctx["alerts"]
+    email = f.effective(f.of_service(alerts, f.CORREO))
+    inbound = f.top_inbound_recipients(alerts)
+    leaks = f.top_leak_senders(alerts)
+    inbound_blocks: list = [
+        ParagraphBlock(text=f"A continuación, se relacionan los correos de {ctx['company']} con mayor tráfico de correos "
+                            f"potencialmente maliciosos {ctx['range_phrase']}, según las alarmas del antígeno de correo:"),
+        TableBlock(header_rows=[[_h("TOP CORREOS MAYOR TRÁFICO DE CORREOS MALICIOSOS"), _h("CANTIDAD RECIBIDOS")]],
+                   rows=[[_c(e), _c(n, align="center")] for e, n in inbound], widths=[4.2, 2.0]),
+    ] if inbound else [ParagraphBlock(text="No se registraron alarmas de correos maliciosos entrantes en el período.")]
+    leak_blocks: list = [
+        ParagraphBlock(text=f"A continuación, se relacionan los usuarios internos de {ctx['company']} que presentaron "
+                            f"alarmas de correos salientes con posible fuga de información {ctx['range_phrase']}:"),
+        TableBlock(header_rows=[[_h("TOP CORREOS SALIENTES – POSIBLE FUGA DE INFORMACIÓN"), _h("CANTIDAD")]],
+                   rows=[[_c(e), _c(n, align="center")] for e, n in leaks], widths=[4.2, 2.0]),
+    ] if leaks else [ParagraphBlock(text="No se registraron alarmas de posible fuga de información en el período.")]
+    return Section(
+        number="6",
+        title="Antígeno de Correo",
+        blocks=[
+            ParagraphBlock(text=f"Durante el período {ctx['period_phrase']}, el antígeno de correo reportó {len(email)} "
+                                "alarmas efectivas para su gestión por el equipo CSOC."),
+            _notice("reportar el número de buzones integrados, el volumen de correos entrantes y salientes analizados "
+                    "ni la vista del panel del antígeno de correo"),
+        ],
+        subsections=[
+            Subsection(number="6.1", title="Top 10 Usuarios Con Mayor Tráfico De Correos Maliciosos Entrantes",
+                       blocks=inbound_blocks),
+            Subsection(number="6.2", title="Top 10 Correos Con Mayor Índice De Rareza Del 96% Al 100%",
+                       blocks=[_notice("relacionar los correos por índice de rareza, ya que la fuente no entrega esa "
+                                       "métrica")]),
+            Subsection(number="6.3", title="Top 10 Usuarios De Posible Fuga De Información", blocks=leak_blocks),
+            Subsection(number="6.4", title="Alarmas Significativas Antígeno Correo", blocks=_significant(
+                alerts, f.CORREO, "Se relaciona a continuación la alarma significativa del antígeno de correo:",
+                "No se registraron alarmas del antígeno de correo en el período.")),
+        ],
+    )
+
+
+def _threat_intel(ctx: dict) -> Section:
+    intel = f.effective(f.of_service(ctx["alerts"], f.INTEL))
+    categories = f.categories_of(intel)
+    return Section(
+        number="7",
+        title="Inteligencia de Amenazas",
+        subsections=[
+            Subsection(number="7.1", title="Monitoreo de Marca",
+                       blocks=[_notice("reportar el monitoreo de marca y dominios")]),
+            Subsection(number="7.2", title="Vulnerabilidades",
+                       blocks=[_notice("reportar el estado de vulnerabilidades, remediaciones ni adversarios")]),
+            Subsection(number="7.3", title="Alarmas Inteligencia De Amenazas", blocks=[
+                ParagraphBlock(text=f"Durante el período {ctx['period_phrase']} se reportaron {len(intel)} eventos de "
+                                    "inteligencia de amenazas:"),
+                TableBlock(header_rows=[[_h("Eventos"), _h("Riesgo"), _h("Alarmas")]],
+                           rows=[[_c(c), _risk(r), _c(n, align="center")] for c, n, r in categories],
+                           widths=[2.9, 2.0, 1.4]),
+            ] if intel else [ParagraphBlock(text="No se registraron alarmas de inteligencia de amenazas en el período.")]),
+            Subsection(number="7.4", title="Alarmas Significativas Inteligencia De Amenazas", blocks=_significant(
+                ctx["alerts"], f.INTEL, "Se relaciona a continuación la alarma significativa de inteligencia de amenazas:",
+                "No se registraron alarmas de inteligencia de amenazas en el período.")),
+        ],
+    )
+
+
+def _behaviour(ctx: dict) -> Section:
+    top = ctx["facts"]["top_categories"][:10]
+    if len(top) < 3:
+        blocks = [_notice("construir el análisis de comportamiento (se requieren al menos tres categorías de alarmas)")]
+    else:
+        blocks = [
+            ParagraphBlock(text=f"Durante el período {ctx['period_phrase']} se realizó un seguimiento a las categorías de "
+                                "alarmas registradas, con el fin de identificar las más frecuentes. A continuación, se "
+                                "detallan las categorías más relevantes del período evaluado:"),
+            ChartBlock(chart="radar", title="Frecuencia por categoría", categories=[c for c, _ in top],
+                       series=[ChartSeries(name="Frecuencia por categoría", values=[n for _, n in top], color="9DC3E6")],
+                       height_inches=3.6),
+        ]
+    return Section(number="8", title="Análisis de Comportamiento", blocks=blocks)
+
+
+def _ioc(ctx: dict) -> Section:
+    alerts, start, end = ctx["alerts"], ctx["start"], ctx["end"]
+    sources, targets = f.top_ips(alerts, "source_ips"), f.top_ips(alerts, "external_ips")
+
+    def ip_table(rows: list[tuple[str, int]]) -> TableBlock:
+        return TableBlock(header_rows=[[_h("IP"), _h("Ocurrencias")]],
+                          rows=[[_c(ip), _c(n, align="center")] for ip, n in rows] or [[_c("Sin datos"), _c("-")]],
+                          widths=[1.9, 1.1])
+
+    days = f.daily_counts(alerts, start, end)
+    return Section(
+        number="9",
+        title="Indicadores de Compromiso",
+        blocks=[
+            ParagraphBlock(text=f"Los indicadores técnicos presentados a continuación consolidan los principales orígenes y "
+                                f"destinos de los eventos de seguridad registrados para {ctx['company']} durante el período "
+                                f"{ctx['period_phrase']}, así como la evolución diaria de las alarmas."),
+            SideBySideBlock(titles=("Top 5 de eventos IP origen.", "Top 5 de eventos IP destino."),
+                            left=ip_table(sources), right=ip_table(targets)),
+            MinorHeadingBlock(text="Gestión de alarmas por día"),
+            ChartBlock(chart="line", title="Alarmas por día", categories=[d for d, _ in days],
+                       series=[ChartSeries(name="Alarmas por día", values=[n for _, n in days], color="E06666")],
+                       x_label="Fechas", y_label="Cantidad de alarmas", height_inches=2.8),
+            MinorHeadingBlock(text="Análisis de IP's"),
+            _notice("reportar la reputación de direcciones IP (reportes de proveedores de seguridad)"),
+        ],
+    )
+
+
+def _highlights(ctx: dict) -> Section:
+    facts, alerts = ctx["facts"], ctx["alerts"]
+    hosts = f.disconnected_agents(alerts)
+    items = [
+        (f"Se registraron {facts['total_alarms']} alarmas, de las cuales {facts['effective_alarms']} fueron efectivas "
+         f"y {facts['voided_alarms']} anuladas."),
+        (f"{facts['answered']} alarmas cuentan con respuesta registrada y {facts['unanswered']} permanecen sin respuesta "
+         "al corte del informe."),
+        (f"Las alarmas de riesgo crítico y alto suman {facts['high_or_critical']} "
+         f"({facts['high_or_critical_percent']}% de las alarmas efectivas)."),
+    ]
+    if facts["top_categories"]:
+        category, count = facts["top_categories"][0]
+        items.append(f"La categoría más frecuente fue {category} con {count} alarmas.")
+    if hosts:
+        items.append(f"Se reportaron {len(hosts)} servidores con agente desconectado; el detalle se encuentra en la "
+                     "sección 3.3.")
+    return Section(
+        number="10",
+        title="Actividades Destacadas",
+        blocks=[
+            ParagraphBlock(text=f"Durante las fechas de monitoreo {ctx['range_phrase']}, se realizó el análisis de monitoreo "
+                                "y alertamiento de actividades detectadas. Se destacan las siguientes novedades registradas "
+                                "en las fuentes de datos:"),
+            BulletsBlock(items=items),
+            _notice("reportar proyectos o actividades adicionales del período"),
+        ],
+    )
+
+
+def build_context(collected: dict, start: date, end: date, company: str) -> dict:
+    alerts = collected.get("alerts", [])
+    history = collected.get("history_3mo") or f.monthly_history(alerts, f.last_three_months(end))
+    facts = f.build_facts(alerts, history, start, end)
+    whole_month = facts["period"] == f"{f.MONTHS[start.month - 1]} de {start.year}" and start.month == end.month
+    return {
+        "alerts": alerts,
+        "history": history,
+        "facts": facts,
+        "company": company,
+        "start": start,
+        "end": end,
+        "period_phrase": f"de {facts['period']}" if whole_month else facts["period"],
+        "range_phrase": f"del {f.spanish_date(start)} al {f.spanish_date(end)}",
+        "period_title": f"{f.MONTHS[end.month - 1].capitalize()} {end.year}" if whole_month else facts["period"],
+        "month_name": f.MONTHS[end.month - 1].capitalize() if whole_month else "Período",
+    }
 
 
 def build_csoc_mensual_sections(collected: dict, narrative: ReportNarrative) -> list[Section]:
-    """The only template registered today -- an 11-section skeleton matching the
-    client's own recurring "Informe de Gestión CSOC" Word template. Moved verbatim
-    from the old generate_report_spec.py."""
-    alerts = collected.get("alerts", [])
-
-    email = collected.get("email_summary", {})
-    email_subsections = [
-        Subsection(
-            number="6.1",
-            title="Top 10 Usuarios Con Mayor Tráfico De Correos Maliciosos Entrantes",
-            table=_email_rarity_table(email.get("top_rarity_recipients", [])),
-            available=email.get("rarity_data_available", False),
-            unavailable_reason=None
-            if email.get("rarity_data_available")
-            else "No disponible: la fuente de datos actual no incluye el detalle de índice de rareza de correos.",
-        ),
-        Subsection(
-            number="6.2",
-            title="Top 10 Correos Con Mayor Índice De Rareza Del 96% Al 100%",
-            available=False,
-            unavailable_reason="No disponible: requiere el detalle de asunto por correo sospechoso, no incluido en la fuente de datos actual.",
-        ),
-        Subsection(
-            number="6.3",
-            title="Top 10 Usuarios De Posible Fuga De Información",
-            table=_data_leak_table(email.get("data_leak_senders", [])),
-            summary=None if email.get("data_leak_senders") else "No se identificaron casos de posible fuga de información en el período.",
-            available=True,
-        ),
-        Subsection(
-            number="6.4",
-            title="Alarmas Significativas Antígeno Correo",
-            significant_alerts=_top_significant_alerts(alerts, EMAIL_TYPE),
-        ),
-    ]
-
-    ip_indicators = collected.get("ip_indicators", {})
-    return [
-        Section(
-            number="3",
-            title="Inventario Monitoreado",
-            summary=narrative.inventory_summary,
-            subsections=[
-                Subsection(
-                    number="3.1",
-                    title="Estadística de Alarmas Últimos Tres Meses",
-                    table=_trend_table(collected.get("trends_3mo", [])),
-                    summary=None
-                    if len(collected.get("trends_3mo", [])) >= 3
-                    else "Nota: la fuente de datos actual solo cubre el período indicado; no hay historial completo de 3 meses.",
-                ),
-                Subsection(number="3.2", title="Indicadores Alarmas", table=_risk_breakdown_table(collected.get("metrics", {}))),
-                _disconnected_agents_subsection(alerts),
-            ],
-        ),
-        Section(
-            number="4",
-            title="Gestión Alarmas SIEM",
-            summary=narrative.siem_summary,
-            subsections=[
-                Subsection(number="4.1", title="Eventos SIEM", table=_source_events_table(alerts, SIEM_TYPE)),
-                Subsection(number="4.2", title="Alarma Significativa", significant_alerts=_top_significant_alerts(alerts, SIEM_TYPE)),
-            ],
-        ),
-        Section(
-            number="5",
-            title="Antígeno de Red",
-            summary=narrative.network_summary,
-            subsections=[
-                Subsection(number="5.1", title="Eventos Antígeno de Red", table=_source_events_table(alerts, NETWORK_TYPE)),
-                Subsection(
-                    number="5.2",
-                    title="Alarmas Significativas Antígeno de Red",
-                    significant_alerts=_top_significant_alerts(alerts, NETWORK_TYPE),
-                ),
-            ],
-        ),
-        Section(number="6", title="Antígeno de Correo", summary=narrative.email_summary, subsections=email_subsections),
-        Section(
-            number="7",
-            title="Inteligencia de Amenazas",
-            summary=narrative.threat_intel_summary,
-            subsections=[
-                Subsection(
-                    number="7.1",
-                    title="Monitoreo de Marca",
-                    available=False,
-                    unavailable_reason="No disponible: requiere integración con una plataforma de monitoreo de marca; no incluida en las fuentes de datos actuales.",
-                ),
-                Subsection(
-                    number="7.2",
-                    title="Vulnerabilidades",
-                    available=False,
-                    unavailable_reason="No disponible: requiere un feed de gestión de vulnerabilidades (ej. CrowdStrike Spotlight); no incluido en las fuentes de datos actuales.",
-                ),
-                Subsection(
-                    number="7.3",
-                    title="Alarmas Inteligencia De Amenazas",
-                    table=SimpleTable(
-                        headers=["Tipo", "Riesgo predominante", "Cantidad"],
-                        rows=[
-                            [t, _dominant_risk([a for a in alerts if a.get("alert_type") == t]), str(sum(1 for a in alerts if a.get("alert_type") == t))]
-                            for t in THREAT_INTEL_TYPES
-                            if any(a.get("alert_type") == t for a in alerts)
-                        ],
-                    ),
-                ),
-                Subsection(
-                    number="7.4",
-                    title="Alarmas Significativas Inteligencia De Amenazas",
-                    significant_alerts=[
-                        alert
-                        for t in THREAT_INTEL_TYPES
-                        for alert in _top_significant_alerts(alerts, t)
-                    ],
-                ),
-            ],
-        ),
-        Section(
-            number="8",
-            title="Análisis de Comportamiento",
-            available=False,
-            unavailable_reason="No disponible: requiere una plataforma de análisis de comportamiento (UEBA); no incluida en las fuentes de datos actuales.",
-        ),
-        Section(
-            number="9",
-            title="Indicadores de Compromiso",
-            summary=narrative.compromise_indicators_summary,
-            subsections=[
-                Subsection(number="9.1", title="Top IPs Origen", table=_ip_table(ip_indicators.get("top_source_ips", []))),
-                Subsection(number="9.2", title="Top IPs Destino", table=_ip_table(ip_indicators.get("top_external_ips", []))),
-                Subsection(number="9.3", title="Gestión de Alarmas por Mes", table=_trend_table(collected.get("trends_3mo", []))),
-            ],
-        ),
-        Section(
-            number="10",
-            title="Actividades Destacadas",
-            body=narrative.highlighted_activities,
-        ),
-    ]
+    """Chapters 3-10 of the client's "Informe de Gestión CSOC". Chapters 1 (objective), 2 (services)
+    and 11 (recommendations) are assembled by specification.py around these."""
+    company = (collected.get("company") or {}).get("name") or ""
+    start = date.fromisoformat(collected["period"]["start"])
+    end = date.fromisoformat(collected["period"]["end"])
+    ctx = build_context(collected, start, end, company)
+    return [_inventory(ctx), _siem(ctx), _network(ctx), _email(ctx), _threat_intel(ctx), _behaviour(ctx), _ioc(ctx),
+            _highlights(ctx)]
 
 
 register_template(DEFAULT_TEMPLATE_KEY, build_csoc_mensual_sections)

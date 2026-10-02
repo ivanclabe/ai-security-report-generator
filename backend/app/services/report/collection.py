@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.models.domain import Company
 from app.providers.factory import get_data_provider
 from app.services.company_registry import get_company_registry
+from app.services.report import csoc_facts
 from app.services.report.request import ReportRequest
 from app.tools import security_tools as tools
 
@@ -107,6 +108,16 @@ async def collect(request: ReportRequest, provider=None) -> CollectionResult:
         tools.GetAlertTrendsParams(company_id=company.id, start_date=three_months_start, end_date=end_date),
     )
 
+    # The report's 3-month comparison (sections 3.1/3.2): every alarm of the window, aggregated per
+    # month/service/risk. Same window as trends_3mo, so the HTTP provider serves it from its cache.
+    history_alerts = await tools.get_security_alerts(
+        provider,
+        tools.GetSecurityAlertsParams(company_id=company.id, start_date=three_months_start, end_date=end_date),
+    )
+    history_3mo = csoc_facts.monthly_history(
+        [a.model_dump(mode="json") for a in history_alerts], csoc_facts.last_three_months(end_date.date())
+    )
+
     mitre = await tools.get_mitre_analysis(
         provider, tools.GetMitreAnalysisParams(company_id=company.id, start_date=start_date, end_date=end_date)
     )
@@ -135,6 +146,8 @@ async def collect(request: ReportRequest, provider=None) -> CollectionResult:
         "top_risk_alerts": [a.model_dump(mode="json") for a in summary.top_risk_alerts],
         "trends": [t.model_dump() for t in trends],
         "trends_3mo": [t.model_dump() for t in trends_3mo],
+        "history_3mo": history_3mo,
+        "period": {"start": request.start_date, "end": request.end_date},
         "mitre_analysis": mitre.model_dump(),
         "response_metrics": response_metrics.model_dump(),
         "email_summary": email_summary.model_dump(),

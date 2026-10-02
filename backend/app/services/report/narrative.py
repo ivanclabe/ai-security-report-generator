@@ -93,7 +93,19 @@ def _build_narrative_payload(collected: dict) -> dict:
             "top_alert": {"alarm_number": top[0]["alarm_number"], "description": top[0]["description"]} if top else None,
         }
 
+    from app.services.report import csoc_facts
+
+    period = collected.get("period") or {}
+    facts = {}
+    if period.get("start") and period.get("end"):
+        from datetime import date
+
+        facts = csoc_facts.build_facts(
+            alerts, collected.get("history_3mo"), date.fromisoformat(period["start"]), date.fromisoformat(period["end"])
+        )
     return {
+        # The figures the document shows -- recommendations must use exactly these.
+        "report_facts": facts,
         "metrics": collected.get("metrics", {}),
         "response_metrics": collected.get("response_metrics", {}),
         "sources": {

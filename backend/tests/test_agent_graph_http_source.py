@@ -120,18 +120,18 @@ async def test_new_report_flow_delivers_the_sources_data_to_the_agent(
     spec = final["report_specification"]
     assert spec["company"] == "THOMAS TGS TPS" and spec["company_logo"] == "Thomas TPS"
     assert len(spec["sections"]) == 8  # 3,4,5,6,7,8,9,10
-    # 6.1 (email rarity) depended on a pivot sheet the alarms export does not carry:
-    # the report must say so instead of dropping the section or inventing a ranking
     email_section = next(s for s in spec["sections"] if s["number"] == "6")
-    sub_61 = next(s for s in email_section["subsections"] if s["number"] == "6.1")
-    assert sub_61["available"] is False and sub_61["unavailable_reason"]
-    # 7.2 (vulnerabilities) has no data source either
+    blocks = {s["number"]: s["blocks"] for s in email_section["subsections"]}
+    # 6.1 is built from the email antigen's alarms (their recipients)...
+    assert any(b["kind"] == "table" for b in blocks["6.1"])
+    # ...6.2 (rarity index) is a metric the source does not deliver: said explicitly, not invented
+    assert [b["kind"] for b in blocks["6.2"]] == ["notice"]
     threat_section = next(s for s in spec["sections"] if s["number"] == "7")
     sub_72 = next(s for s in threat_section["subsections"] if s["number"] == "7.2")
-    assert sub_72["available"] is False and sub_72["unavailable_reason"]
+    assert sub_72["blocks"][0]["kind"] == "notice" and "evidencia suficiente" in sub_72["blocks"][0]["text"]
 
 
-async def test_fabricated_evidence_is_rejected(compiled_graph, monkeypatch):
+async def test_fabricated_evidence_is_removed_and_noted(compiled_graph, monkeypatch):
     _stub_llm(
         monkeypatch,
         ReportRequestUpdate(intent="new_report", company="THOMAS TGS TPS", start_date="2026-07-01", end_date="2026-07-31"),
@@ -146,8 +146,11 @@ async def test_fabricated_evidence_is_rejected(compiled_graph, monkeypatch):
         config=config,
     )
 
-    assert final["status"] == "error"
-    assert any("ALARMA-QUE-NO-EXISTE" in e for e in final["errors"])
+    # the unsupported recommendation never reaches the document; the version records why
+    assert final["status"] == "ready", final.get("errors")
+    spec = final["report_specification"]
+    assert spec["recommendations"] == []
+    assert any("ALARMA-QUE-NO-EXISTE" in note for note in spec["validation_notes"])
 
 
 async def test_an_ambiguous_company_asks_the_user_instead_of_guessing(compiled_graph, monkeypatch, source_server):

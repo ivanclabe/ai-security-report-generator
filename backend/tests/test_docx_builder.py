@@ -14,6 +14,20 @@ from app.schemas.report_spec import (
 )
 
 
+def _all_paragraphs(container):
+    """Paragraphs of the body and of every (nested) table, in order."""
+    for paragraph in container.paragraphs:
+        yield paragraph
+    for table in container.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                yield from _all_paragraphs(cell)
+
+
+def _text(doc) -> str:
+    return "\n".join(p.text for p in _all_paragraphs(doc))
+
+
 def _sample_spec() -> ReportSpecification:
     return ReportSpecification(
         document_control=DocumentControl(titulo="Informe de Gestión — THOMAS TGS-TPS", fecha_version="2026-08-06"),
@@ -92,13 +106,13 @@ def test_build_document_includes_section_headings(tmp_path):
     build_document(spec, output_path)
 
     doc = Document(str(output_path))
-    headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
+    headings = [p.text for p in _all_paragraphs(doc) if p.style.name.startswith("Heading")]
 
-    assert any("Objetivo" in h for h in headings)
-    assert any("Servicios" in h for h in headings)
-    assert any("3. Inventario Monitoreado" in h for h in headings)
-    assert any("3.2 Indicadores Alarmas" in h for h in headings)
-    assert any("Recomendaciones" in h for h in headings)
+    # same heading style as the client's reference: chapters in capitals, subsections in title case
+    assert "1. OBJETIVO" in headings and "2. SERVICIOS" in headings
+    assert "3. INVENTARIO MONITOREADO" in headings
+    assert "3.2 Indicadores Alarmas" in headings
+    assert "11. RECOMENDACIONES" in headings
 
 
 def test_build_document_renders_unavailable_sections_with_notice(tmp_path):
@@ -107,7 +121,7 @@ def test_build_document_renders_unavailable_sections_with_notice(tmp_path):
     build_document(spec, output_path)
 
     doc = Document(str(output_path))
-    full_text = "\n".join(p.text for p in doc.paragraphs)
+    full_text = _text(doc)
 
     assert "requiere una plataforma UEBA" in full_text
     assert "requiere un feed de gestión de vulnerabilidades" in full_text
@@ -119,7 +133,7 @@ def test_build_document_renders_significant_alert_and_response(tmp_path):
     build_document(spec, output_path)
 
     doc = Document(str(output_path))
-    full_text = "\n".join(p.text for p in doc.paragraphs)
+    full_text = _text(doc)
 
     assert "ALARMA TGS TPS 3636" in full_text
     assert "Se validó con el usuario." in full_text

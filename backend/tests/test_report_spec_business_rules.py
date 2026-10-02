@@ -25,9 +25,8 @@ def test_empty_sections_rejected():
     assert any("at least one section" in e for e in errors)
 
 
-def test_empty_recommendations_rejected():
-    errors = _spec(recommendations=[]).validate_business_rules()
-    assert any("at least one recommendation" in e for e in errors)
+def test_empty_recommendations_are_allowed_the_document_says_there_is_no_evidence():
+    assert _spec(recommendations=[]).validate_business_rules() == []
 
 
 def test_valid_spec_has_no_business_errors():

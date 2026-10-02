@@ -157,6 +157,54 @@ explícitamente como el punto a remover si un despliegue específico nunca neces
   el navegador real reproduciendo — y luego confirmando la corrección de — el bug de reenvío
   duplicado.
 
+## 11. Plantilla de referencia del cliente ("Informe de Gestión CSOC")
+
+El documento replica la estructura y presentación del informe que entrega el cliente (portada,
+tabla de contenido con número de página, control del documento, objetivo y servicios, capítulos
+3–11 en el mismo orden y con los mismos títulos, tablas con encabezado verde, celdas de riesgo
+coloreadas, fichas de "Alarma significativa", gráficos, banda gris de encabezado y recuadro de pie
+de página). La referencia define **cómo se ve** el informe; el contenido sale solo de los datos.
+
+**De dónde sale cada cifra:**
+
+- `csoc_facts.py` calcula de forma determinista, a partir de las alarmas de la fuente, todos los
+  hechos del informe: totales, efectivas y anuladas, distribución por servicio, respuesta por
+  servicio, distribución de riesgo, categorías, histórico de 3 meses, agentes desconectados, IPs y
+  correos más frecuentes, y alarmas por día. Ningún número del documento lo escribe el LLM.
+- `templates.py` convierte esos hechos en bloques tipados (`ParagraphBlock`, `TableBlock`,
+  `ChartBlock`, `AlertBoxBlock`, `NoticeBlock`…), que `docx_builder.py` dibuja.
+- El LLM solo redacta las **recomendaciones** (capítulo 11). `ground_recommendations` descarta
+  cualquier recomendación que cite una cifra fuera de `allowed_numbers()` o una alarma inexistente,
+  y deja la razón en `validation_notes`.
+
+**Sin datos, sin relleno.** Cuando la fuente no trae evidencia para un elemento de la referencia
+(inventario EDR/SIEM, panel del firewall o del antígeno, volumen de buzones, índice de rareza,
+monitoreo de marca, vulnerabilidades, reputación de IPs, proyectos adicionales), la sección se
+mantiene y muestra el texto explícito "No se encontró evidencia suficiente en las fuentes de datos
+disponibles para…". Un mes del histórico para el que la fuente no devolvió alarmas aparece como
+**N/D**, nunca como 0, y queda fuera de la tendencia, del gráfico y de los totales.
+
+**Validación sección por sección (antes de generar):** `validate()` combina las reglas de negocio,
+la evidencia (toda alarma citada existe) y `validate_layout` (series de los gráficos del mismo
+largo que sus categorías, sin valores negativos, y filas de tabla coherentes con sus columnas).
+
+**Aceptación:** el fixture `alarmas_tps_julio.csv` corresponde al mismo período que el informe de
+referencia de julio de 2026, y `tests/test_csoc_report_template.py` verifica que los hechos
+reproducen sus cifras (169/166/3, 150/19, riesgo 19/59/36/52, desglose SIEM, Red e Inteligencia).
+
+**Fidelidad visual en LibreOffice (PDF):**
+
+- Las tablas fijan su ancho completo (`tblW`, `tblGrid`, `tcW` y `autofit` desactivado), porque
+  LibreOffice ignora las columnas si solo se define una parte.
+- Los números de página de la tabla de contenido son campos `PAGEREF` a marcadores. LibreOffice
+  solo los resuelve si el campo trae un resultado de relleno.
+- **Poppins** (títulos, licencia OFL, en `app/document/assets/fonts/`) va **incrustada y ofuscada**
+  dentro del .docx (ECMA-376 §17.8.1), así se ve igual en equipos que no la tienen instalada.
+- Calibri (cuerpo) se sustituye en el servidor por Carlito, que tiene las mismas métricas. El
+  Dockerfile instala `fonts-crosextra-carlito`.
+- **Logo del cliente en la portada:** se toma de `app/document/assets/logos/<slug>.png` si existe;
+  si no, la portada muestra el nombre de la empresa.
+
 ---
 
 **Fin de la Fase 7.** Backend: 100/100 tests. Frontend: `tsc --noEmit` limpio, 4/4 tests. Quedo a la

@@ -142,5 +142,7 @@ async def test_modification_reuses_data_when_only_narrative_changes(monkeypatch)
         {"conversation_id": "conv-3", "user_request": "Make it executive."}, config=config
     )
     assert second["status"] == "ready", second.get("errors")
-    assert second["report_specification"]["objective"] == "Executive-focused objective."
+    # the narrative was regenerated (both scripted narratives consumed) without re-collecting data;
+    # the objective itself is now the template's fixed text, not LLM prose
+    assert next(narrative_responses, None) is None
     assert collect_calls["count"] == 1

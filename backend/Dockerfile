@@ -5,8 +5,10 @@ WORKDIR /app
 # libreoffice-writer (not the full libreoffice meta-package) is enough to convert the
 # generated .docx to PDF headlessly -- see app/services/report/document.py. This is the
 # single largest layer in this image; if PDF is ever not needed in a given deployment,
-# this line is the one to drop.
-RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer \
+# this line is the one to drop. fonts-crosextra-carlito is metric-compatible with Calibri (the
+# report's body font), so the PDF keeps the same line breaks and page count as Word; Poppins
+# (headings) travels embedded inside the .docx itself.
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer fonts-crosextra-carlito \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt ./requirements.txt
