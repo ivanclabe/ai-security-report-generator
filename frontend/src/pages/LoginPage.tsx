@@ -48,7 +48,7 @@ export function LoginPage() {
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/25">
             <IconShield className="h-5 w-5" aria-hidden="true" />
           </span>
-          <span className="text-sm font-semibold">Informes de Seguridad · SOC</span>
+          <span className="text-sm font-semibold">Invotecsa</span>
         </div>
         <div className="relative">
           <h2 className="text-3xl font-semibold leading-tight">
@@ -68,7 +68,7 @@ export function LoginPage() {
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500">
               <IconShield className="h-5 w-5 text-white" aria-hidden="true" />
             </span>
-            <span className="text-sm font-semibold text-fg">Informes de Seguridad · SOC</span>
+            <span className="text-sm font-semibold text-fg">Invotecsa</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-fg">Inicia sesión</h1>
           <p className="mt-1 text-sm text-fg-muted">Usa tu cuenta corporativa de la plataforma.</p>
