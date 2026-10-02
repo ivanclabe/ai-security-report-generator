@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useAuthStore } from "../store/useAuthStore";
 import { useConversationStore } from "../store/useConversationStore";
-import { IconEdit, IconLogout, IconPin, IconPlus, IconTrash, IconUser } from "./icons";
+import { IconEdit, IconLogout, IconPin, IconPlus, IconServer, IconTrash, IconUser } from "./icons";
+import { SourceSettingsDialog } from "./SourceSettingsDialog";
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const conversations = useConversationStore((s) => s.conversations);
@@ -16,6 +17,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [isSourceSettingsOpen, setIsSourceSettingsOpen] = useState(false);
 
   function startEditing(id: string, currentTitle: string | null) {
     setEditingId(id);
@@ -116,7 +118,17 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
           </div>
         ))}
       </nav>
-      <div className="flex items-center justify-between border-t border-slate-200 px-3 py-2.5">
+      <div className="border-t border-slate-200 px-2 pt-2">
+        <button
+          onClick={() => setIsSourceSettingsOpen(true)}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+        >
+          <IconServer className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+          Fuente de datos
+        </button>
+      </div>
+      {isSourceSettingsOpen && <SourceSettingsDialog onClose={() => setIsSourceSettingsOpen(false)} />}
+      <div className="flex items-center justify-between px-3 py-2.5">
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
           <IconUser className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span className="truncate">{username}</span>

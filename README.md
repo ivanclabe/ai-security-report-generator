@@ -74,6 +74,11 @@ SOURCE_VERIFY_TLS=true                               # si es https; o SOURCE_CA_
 > La fuente se sirve hoy por **http**: credenciales y datos viajan sin cifrar. Usarla solo por la
 > VPN/LAN y pedir https al proveedor (el backend lo advierte al arrancar).
 
+**Cambiar la IP, el usuario o la contraseña desde la app:** barra lateral → **Fuente de datos**.
+Se prueba la conexión antes de guardar y el cambio aplica de inmediato, sin reiniciar. Los valores
+guardados ahí tienen prioridad sobre `backend/.env` y quedan en `backend/source_settings.json`
+(permisos 0600, fuera de git); la contraseña nunca se vuelve a mostrar.
+
 `backend/app/ingestion/` es una capa **separada del agente** (nada en `app/agents` ni
 `app/services/report` la importa): `config.py` (SOURCE_* → `SourceConfig`), `requests.py`
 (construye las URLs de alarmas/indicadores y corrige los bordes de fechas de cada endpoint),
@@ -155,6 +160,7 @@ Copiar `backend/.env.example` a `backend/.env` y completar:
 | `SOURCE_VERIFY_TLS` / `SOURCE_CA_BUNDLE` | Verificación TLS (default `true`); CA propia vía `SOURCE_CA_BUNDLE` |
 | `SOURCE_ALARMS_PATH` / `SOURCE_INDICATORS_PATH` | Rutas de los endpoints (defaults `/detallado_alarmas.php`, `/indicadores.php`); también aceptan una URL completa si un endpoint vive en otro host |
 | `SOURCE_RECONCILE_INDICATORS` | Conciliar cada descarga con el total del panel de indicadores (default `true`) |
+| `SOURCE_SETTINGS_PATH` | Archivo donde la app guarda dirección/usuario/contraseña editados desde **Fuente de datos** (default `backend/source_settings.json`; en Docker, `/app/storage/source_settings.json`) |
 | `SOURCE_TIMEOUT_SECONDS` / `SOURCE_ALARMS_LIMIT` / `SOURCE_CACHE_TTL_SECONDS` | Timeout (30), `limite=` por request (1000) y vigencia del caché (300 s) |
 | `MOCK_DATA_PATH` / `MITRE_TACTICS_PATH` | Overrides de ruta; por defecto apuntan a `data/` en la raíz del proyecto |
 | `CORS_ORIGINS` | Lista JSON de orígenes permitidos (default `["http://localhost:5173"]`) |

@@ -16,6 +16,8 @@ services:
       SOURCE_USERNAME: ${SOURCE_USERNAME:-}
       SOURCE_PASSWORD: ${SOURCE_PASSWORD:-}
       SOURCE_VERIFY_TLS: ${SOURCE_VERIFY_TLS:-true}
+      # Address/credentials changed from the app persist in the storage volume (0600).
+      SOURCE_SETTINGS_PATH: /app/storage/source_settings.json
       SQLITE_CHECKPOINT_DB_PATH: /app/storage/agent_checkpoints.sqlite3
       REPORTS_DIR: /app/storage/generated_reports
       CORS_ORIGINS: '["http://localhost:5173"]'

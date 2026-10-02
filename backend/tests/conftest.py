@@ -40,6 +40,8 @@ def isolated_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("SQLITE_APP_DB_PATH", str(tmp_path / "app.sqlite3"))
     monkeypatch.setenv("SQLITE_CHECKPOINT_DB_PATH", str(tmp_path / "checkpoints.sqlite3"))
     monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
+    # never read or write the real backend/source_settings.json from a test
+    monkeypatch.setenv("SOURCE_SETTINGS_PATH", str(tmp_path / "source_settings.json"))
 
     get_settings.cache_clear()
     yield get_settings()
@@ -109,9 +111,11 @@ def _reset_login_rate_limit():
     """See app.auth.reset_login_rate_limit -- the limiter's attempt log is
     process-global, so without this, tests accumulate real login attempts
     against each other and start tripping 429 partway through a full run."""
+    from app.api.source_settings import reset_source_settings_rate_limit
     from app.auth import reset_login_rate_limit
 
     reset_login_rate_limit()
+    reset_source_settings_rate_limit()
     yield
 
 

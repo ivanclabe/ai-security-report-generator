@@ -6,9 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import auth
 from app.agents.graph import get_compiled_graph
-from app.api import conversations, health, reference_data, reports
+from app.api import conversations, health, reference_data, reports, source_settings
 from app.config.settings import get_settings
-from app.ingestion.config import SourceConfig
+from app.ingestion.source_settings_store import effective_source_config
 from app.providers.factory import get_data_provider
 from app.services.conversation_service import ConversationService
 
@@ -49,7 +49,7 @@ def _check_data_source(settings) -> None:
     attempt also fails with the same explicit message)."""
     if settings.data_provider != "http":
         return
-    config = SourceConfig.from_settings(settings)
+    config = effective_source_config(settings)
     problems = config.problems()
     if problems:
         logger.error("Fuente de datos HTTP sin configurar en backend/.env: %s", "; ".join(problems))
@@ -105,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(conversations.router)
     app.include_router(reports.router)
     app.include_router(reference_data.router)
+    app.include_router(source_settings.router)
 
     return app
 

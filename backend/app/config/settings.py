@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     source_cache_ttl_seconds: int = 300
     # Compare each alarms download with the source's indicators page (see SourceConfig).
     source_reconcile_indicators: bool = True
+    # Address/username/password saved from the app (Configuración > Fuente de datos) override
+    # the SOURCE_* values above; stored here with 0600 permissions (see source_settings_store.py).
+    source_settings_path: Path = BACKEND_DIR / "source_settings.json"
 
     sqlite_checkpoint_db_path: Path = BACKEND_DIR / "agent_checkpoints.sqlite3"
 

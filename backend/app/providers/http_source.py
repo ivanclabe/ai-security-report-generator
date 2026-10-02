@@ -12,6 +12,7 @@ that make up one report therefore cost one HTTP request per distinct period.
 """
 from datetime import datetime
 
+from app.ingestion.config import SourceConfig
 from app.ingestion.service import AlarmAcquisitionService
 from app.models.domain import (
     AlertMetrics,
@@ -32,6 +33,9 @@ class HttpSourceDataProvider(DataProvider):
 
     async def aclose(self) -> None:
         await self._acquisition.aclose()
+
+    async def reconfigure_source(self, config: SourceConfig) -> None:
+        await self._acquisition.reconfigure(config)
 
     async def get_company(self, *, company_id: str | None = None, name: str | None = None) -> Company | None:
         return await self._registry.get(company_id=company_id, name=name)

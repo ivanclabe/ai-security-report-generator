@@ -83,6 +83,15 @@ class SourceClient:
     def config(self) -> SourceConfig:
         return self._config
 
+    async def reconfigure(self, config: SourceConfig) -> None:
+        """Point the client at a new address/credentials (saved from the app). The current
+        session is dropped: its cookie belongs to the old server or the old account."""
+        async with self._lock:
+            await self._discard_client()
+            self._config = config
+            self._use_basic_auth = False
+            self.last_login_method = None
+
     async def aclose(self) -> None:
         async with self._lock:
             await self._discard_client()

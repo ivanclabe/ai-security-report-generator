@@ -7,6 +7,10 @@ import type {
   MessageOut,
   ReportInfo,
   ReportTemplate,
+  SaveSourceSettingsResult,
+  SourceConnectionTest,
+  SourceSettings,
+  SourceSettingsInput,
   StreamEvent,
 } from "../types";
 
@@ -152,6 +156,51 @@ export async function listCompanies(): Promise<Company[]> {
 export async function listReportTemplates(): Promise<ReportTemplate[]> {
   const res = await fetch(`${BASE_URL}/report-templates`, { headers: authHeaders() });
   return json(res);
+}
+
+/** Like json(), but surfaces the API's `detail` message (e.g. why an address is invalid). */
+async function jsonWithDetail<T>(res: Response): Promise<T> {
+  if (res.status === 401) {
+    setAuthToken(null);
+    onUnauthorized?.();
+  }
+  if (!res.ok) {
+    let message = `Error ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") message = body.detail;
+    } catch {
+      // not JSON -- keep the status-based message
+    }
+    throw new Error(message);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function getSourceSettings(): Promise<SourceSettings> {
+  const res = await fetch(`${BASE_URL}/source-settings`, { headers: authHeaders() });
+  return jsonWithDetail(res);
+}
+
+export async function testSourceSettings(input: SourceSettingsInput): Promise<SourceConnectionTest> {
+  const res = await fetch(`${BASE_URL}/source-settings/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  return jsonWithDetail(res);
+}
+
+export async function saveSourceSettings(
+  input: SourceSettingsInput,
+  skipConnectionTest = false,
+): Promise<SaveSourceSettingsResult> {
+  const res = await fetch(`${BASE_URL}/source-settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ...input, skip_connection_test: skipConnectionTest }),
+  });
+  return jsonWithDetail(res);
 }
 
 export async function generateReport(

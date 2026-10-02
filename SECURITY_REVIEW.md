@@ -163,5 +163,15 @@ Con la fuente HTTP aparecen credenciales de un sistema externo. Reglas aplicadas
   bloquear la cuenta de servicio contra un servidor con política de intentos fallidos.
 - **Empresa acotada por request**: el valor de `cliente=` sale del registro (nunca de texto libre
   del usuario o del LLM) y se codifica como parámetro; las filas de otras empresas se descartan.
+- **Edición desde la app** (Fuente de datos): solo con el login de la app; la contraseña es de solo
+  escritura (ninguna respuesta la incluye; GET informa solo `password_set`). Se guarda en
+  `SOURCE_SETTINGS_PATH` con permisos 0600 y escritura atómica, nunca en Supabase ni en el navegador
+  (misma protección que `backend/.env`, que también la tiene en claro en disco). La dirección se
+  valida (solo http/https, sin usuario/contraseña embebidos, sin parámetros). Las pruebas de conexión
+  y los guardados están limitados a 10 cada 5 minutos para no bloquear la cuenta de la fuente. Cada
+  cambio se registra en el log (quién, servidor anterior y nuevo, si cambió usuario/contraseña), sin
+  valores secretos. Riesgo aceptado: un operador autenticado puede apuntar la app a otro servidor y
+  enviarle las credenciales que él mismo escribe; es el propósito de la función.
 - **Pendiente recomendado**: usar una cuenta de servicio de solo lectura dedicada a este sistema y
-  rotar la contraseña que se compartió por chat durante el desarrollo.
+  rotar la contraseña que se compartió por chat durante el desarrollo (ahora puede hacerse desde la
+  app, en Fuente de datos).

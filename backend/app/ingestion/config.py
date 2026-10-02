@@ -2,8 +2,9 @@
 
 Centralizes everything that varies between environments -- address, paths,
 credentials, TLS policy, limits -- so the rest of the acquisition layer never
-reads environment variables or hardcodes a URL. Changing the server's IP is a
-change to SOURCE_BASE_URL in backend/.env and a restart.
+reads environment variables or hardcodes a URL. The address and credentials
+start from SOURCE_* in backend/.env and can be changed from the app without a
+restart (see source_settings_store.py).
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -88,5 +89,7 @@ class SourceConfig:
         problems = self.problems()
         if problems:
             raise SourceConfigError(
-                "La fuente de datos no está configurada en backend/.env: " + "; ".join(problems) + "."
+                "La fuente de datos no está configurada (Configuración > Fuente de datos, o backend/.env): "
+                + "; ".join(problems)
+                + "."
             )

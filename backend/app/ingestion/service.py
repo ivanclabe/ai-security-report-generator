@@ -31,6 +31,7 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 
 from app.ingestion.client import SourceClient
+from app.ingestion.config import SourceConfig
 from app.ingestion.csv_decoder import decode_alarms_csv
 from app.ingestion.errors import SourceError, SourceFormatError
 from app.ingestion.indicators_parser import parse_indicators_page
@@ -96,6 +97,12 @@ class AlarmAcquisitionService:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    async def reconfigure(self, config: SourceConfig) -> None:
+        """New address/credentials: drop the session and everything cached from the old source."""
+        await self._client.reconfigure(config)
+        self._batches.clear()
+        self._indicators.clear()
 
     async def get_batch(self, company: Company, start: datetime, end: datetime) -> AlarmBatch:
         key = (company.id, start.strftime(_KEY_FORMAT), end.strftime(_KEY_FORMAT))

@@ -2,9 +2,9 @@ from functools import lru_cache
 
 from app.config.settings import get_settings
 from app.ingestion.client import SourceClient
-from app.ingestion.config import SourceConfig
 from app.ingestion.normalizer import load_mitre_catalog
 from app.ingestion.service import AlarmAcquisitionService
+from app.ingestion.source_settings_store import effective_source_config
 from app.providers.base import DataProvider
 from app.providers.http_source import HttpSourceDataProvider
 from app.providers.mock import MockDataProvider
@@ -24,7 +24,7 @@ def get_data_provider() -> DataProvider:
     if kind == "mock":
         return MockDataProvider(settings.mock_data_path)
     if kind == "http":
-        client = SourceClient(SourceConfig.from_settings(settings))
+        client = SourceClient(effective_source_config(settings))
         acquisition = AlarmAcquisitionService(
             client, load_mitre_catalog(settings.mitre_tactics_path), on_fetch=record_import
         )

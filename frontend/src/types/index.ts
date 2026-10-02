@@ -74,3 +74,35 @@ export interface GenerateReportRequest {
   risk_level_filter?: string[];
   format?: string;
 }
+
+/** Configuración > Fuente de datos. The password is write-only: never returned by the API. */
+export interface SourceSettings {
+  base_url: string;
+  username: string;
+  password_set: boolean;
+  uses_https: boolean;
+  origin: "app" | "env";
+  updated_at: string | null;
+  updated_by: string | null;
+  provider_active: boolean;
+}
+
+export interface SourceSettingsInput {
+  base_url: string;
+  username: string;
+  /** Empty = keep the current password. */
+  password?: string;
+}
+
+export interface SourceConnectionTest {
+  ok: boolean;
+  message: string;
+  login_method: string | null;
+  elapsed_seconds: number | null;
+}
+
+export interface SaveSourceSettingsResult {
+  saved: boolean;
+  test: SourceConnectionTest | null;
+  settings: SourceSettings;
+}

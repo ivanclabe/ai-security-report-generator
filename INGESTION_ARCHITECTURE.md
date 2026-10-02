@@ -272,9 +272,16 @@ después de un éxito se trata como sesión expirada: se reautentica y se reinte
 403, 404, 5xx, timeouts y errores de TLS tienen mensajes propios que nombran la variable de entorno
 a revisar, nunca las credenciales.
 
-**Cambio de IP.** `SOURCE_BASE_URL` es el único lugar con la dirección; las rutas son `SOURCE_*_PATH`.
-Cambiar de servidor = editar `backend/.env` y reiniciar, sin tocar código (probado en
-`tests/test_source_client.py`).
+**Cambio de IP y de credenciales desde la app.** La dirección, el usuario y la contraseña se cambian
+en **Fuente de datos** (barra lateral), sin tocar código ni reiniciar. `backend/.env` (`SOURCE_*`)
+da los valores iniciales; lo guardado desde la app se escribe en `SOURCE_SETTINGS_PATH`
+(`backend/source_settings.json`, permisos 0600, escritura atómica, fuera de git; en Docker, el volumen
+`storage`) y tiene prioridad (`source_settings_store.effective_source_config`). Al guardar, la API
+(`/api/source-settings`) prueba la conexión con un export de una fila y solo guarda si funciona (o si
+el operador elige "Guardar de todos modos", p. ej. con la VPN caída); luego reconfigura el proveedor
+en caliente: descarta la sesión y la caché de la fuente anterior. La contraseña es de solo escritura:
+la API nunca la devuelve y un campo vacío conserva la actual. TLS, rutas y límites siguen solo en el
+entorno. Probado en `tests/test_source_settings.py` y `tests/test_source_client.py`.
 
 **Qué trae cada fuente.**
 
