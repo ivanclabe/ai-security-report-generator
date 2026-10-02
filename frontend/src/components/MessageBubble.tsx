@@ -1,6 +1,7 @@
 import type { ChatMessage } from "../types";
 import { IconAlertCircle, IconBot, IconUser } from "./icons";
 import { ReportCard } from "./ReportCard";
+import { SourceNotConfiguredNotice } from "./SourceNotConfiguredNotice";
 
 export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
@@ -9,7 +10,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
       {!isUser && (
         <span
           className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-            message.isError ? "bg-red-100 text-red-600" : "bg-brand-500 text-white"
+            message.isError ? "bg-danger-subtle text-danger" : "bg-primary text-primary-fg"
           }`}
           aria-hidden="true"
         >
@@ -18,21 +19,26 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
       )}
       <div className={`flex max-w-2xl flex-col ${isUser ? "items-end" : "items-start"}`}>
         <div
-          className={`whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
+          className={`whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
             isUser
-              ? "bg-slate-900 text-white"
+              ? "rounded-tr-md bg-primary text-primary-fg"
               : message.isError
-                ? "bg-red-50 text-red-700"
-                : "bg-white text-slate-800 shadow-sm ring-1 ring-slate-200"
+                ? "rounded-tl-md border border-danger/25 bg-danger-subtle text-danger-fg"
+                : "rounded-tl-md border border-line bg-surface text-fg shadow-card"
           }`}
         >
           {message.content}
         </div>
+        {message.errorCode === "source_not_configured" && (
+          <div className="mt-2 w-full">
+            <SourceNotConfiguredNotice compact />
+          </div>
+        )}
         {message.report && <ReportCard report={message.report} />}
       </div>
       {isUser && (
         <span
-          className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-600"
+          className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-3 text-fg-muted"
           aria-hidden="true"
         >
           <IconUser className="h-4 w-4" />

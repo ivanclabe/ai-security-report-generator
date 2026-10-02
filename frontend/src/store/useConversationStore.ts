@@ -120,6 +120,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             content: event.message,
             report: event.report,
             isError: event.status === "error",
+            errorCode: event.error_code ?? null,
           };
           set((state) => ({
             messagesByConversation: {
@@ -133,7 +134,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         }
       });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Something went wrong." });
+      set({ error: err instanceof Error ? err.message : "Algo salió mal. Intenta de nuevo." });
     } finally {
       set({ isStreaming: false, progressMessage: null });
     }

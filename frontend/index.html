@@ -9,6 +9,25 @@
       type="image/svg+xml"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300532A'%3E%3Cpath d='M12 2l8 3.5v6.2c0 5.1-3.4 8.6-8 10.3-4.6-1.7-8-5.2-8-10.3V5.5L12 2z'/%3E%3C/svg%3E"
     />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Apply the saved theme before first paint (no light flash in dark mode).
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem("ai_report_gen_prefs") || "{}");
+          var theme = prefs.theme || "system";
+          var dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+          if (prefs.preferences && prefs.preferences.density === "compact") document.documentElement.dataset.density = "compact";
+          if (prefs.preferences && prefs.preferences.reduce_motion) document.documentElement.classList.add("reduce-motion");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

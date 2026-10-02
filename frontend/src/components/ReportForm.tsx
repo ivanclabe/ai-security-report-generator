@@ -1,69 +1,91 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { AUDIENCES } from "../lib/constants";
 import * as api from "../services/api";
 import { useConversationStore } from "../store/useConversationStore";
-import type { Company, ReportInfo, ReportTemplate } from "../types";
-import { IconAlertCircle } from "./icons";
+import { usePreferencesStore } from "../store/usePreferencesStore";
+import { useSourceStatusStore } from "../store/useSourceStatusStore";
+import type { Company, ErrorCode, ReportInfo, ReportTemplate } from "../types";
+import { IconArrowRight, IconFilePlus } from "./icons";
 import { ProgressStatus } from "./ProgressStatus";
 import { ReportCard } from "./ReportCard";
+import { SourceNotConfiguredNotice } from "./SourceNotConfiguredNotice";
+import { Alert } from "./ui/Alert";
+import { Button } from "./ui/Button";
+import { Card, CardBody, CardHeader } from "./ui/Card";
+import { Field } from "./ui/Field";
 
-const RISK_LEVELS = ["Critico", "Alto", "Medio", "Bajo"];
-const AUDIENCES = [
-  { value: "", label: "General" },
-  { value: "ejecutivo", label: "Ejecutivo" },
-  { value: "tecnico", label: "Técnico" },
+const RISK_LEVELS = [
+  { value: "Critico", label: "Crítico" },
+  { value: "Alto", label: "Alto" },
+  { value: "Medio", label: "Medio" },
+  { value: "Bajo", label: "Bajo" },
 ];
 
-const selectClass =
-  "mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500";
-const labelClass = "block text-sm font-medium text-slate-700";
+const iso = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <fieldset className="rounded-lg border border-slate-200 p-4">
-      <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</legend>
-      <div className="mt-2">{children}</div>
-    </fieldset>
-  );
+function presets() {
+  const today = new Date();
+  const firstThis = new Date(today.getFullYear(), today.getMonth(), 1);
+  const lastPrev = new Date(firstThis.getTime() - 86400000);
+  const firstPrev = new Date(lastPrev.getFullYear(), lastPrev.getMonth(), 1);
+  const weekAgo = new Date(today.getTime() - 6 * 86400000);
+  return [
+    { label: "Mes anterior", start: iso(firstPrev), end: iso(lastPrev) },
+    { label: "Mes actual", start: iso(firstThis), end: iso(today) },
+    { label: "Últimos 7 días", start: iso(weekAgo), end: iso(today) },
+  ];
 }
 
+type Result = { report: ReportInfo | null; message: string; isError: boolean; errorCode?: ErrorCode; conversationId?: string };
+
 export function ReportForm() {
+  const navigate = useNavigate();
   const loadConversations = useConversationStore((s) => s.loadConversations);
   const selectConversation = useConversationStore((s) => s.selectConversation);
+  const prefs = usePreferencesStore((s) => s.preferences);
+  const sourceStatus = useSourceStatusStore((s) => s.status);
+  const loadSourceStatus = useSourceStatusStore((s) => s.load);
 
   const [companies, setCompanies] = useState<Company[]>([]);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [companyId, setCompanyId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reportType, setReportType] = useState("");
-  const [audience, setAudience] = useState("");
+  const [audience, setAudience] = useState(prefs.default_audience);
   const [categoriesText, setCategoriesText] = useState("");
   const [riskLevels, setRiskLevels] = useState<string[]>([]);
-  const [format, setFormat] = useState("docx");
+  const [format, setFormat] = useState<string>(prefs.default_format);
   const selectedCompany = companies.find((c) => c.id === companyId);
+  const periodPresets = useMemo(() => presets(), []);
   const dateError =
-    startDate && endDate && startDate > endDate
-      ? "La fecha inicial debe ser anterior o igual a la fecha final."
-      : null;
+    startDate && endDate && startDate > endDate ? "La fecha inicial debe ser anterior o igual a la fecha final." : null;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
-  const [result, setResult] = useState<{ report: ReportInfo | null; message: string; isError: boolean } | null>(
-    null,
-  );
+  const [result, setResult] = useState<Result | null>(null);
+
+  const sourceBlocked = sourceStatus?.provider_active && !sourceStatus.configured;
 
   useEffect(() => {
-    api.listCompanies().then(setCompanies).catch(() => setCompanies([]));
-    api.listReportTemplates().then((list) => {
-      setTemplates(list);
-      // The <select> below always renders with something visually chosen (the
-      // browser defaults to the first <option>) -- without this, that visual
-      // choice and the actual `reportType` state (still "") could silently
-      // diverge the moment a second template exists.
-      setReportType((current) => current || list[0]?.key || "");
-    }).catch(() => setTemplates([]));
-  }, []);
+    loadSourceStatus();
+    api
+      .listCompanies()
+      .then(setCompanies)
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "No se pudieron cargar las empresas."));
+    api
+      .listReportTemplates()
+      .then((list) => {
+        setTemplates(list);
+        // keep the visible <select> choice and the state in sync from the start
+        setReportType((current) => current || list[0]?.key || "");
+      })
+      .catch(() => setTemplates([]));
+  }, [loadSourceStatus]);
 
   function toggleRiskLevel(level: string) {
     setRiskLevels((prev) => (prev.includes(level) ? prev.filter((l) => l !== level) : [...prev, level]));
@@ -76,7 +98,7 @@ export function ReportForm() {
 
     setIsSubmitting(true);
     setResult(null);
-    setProgressMessage("Validando parámetros...");
+    setProgressMessage("Validando parámetros…");
 
     const categories = categoriesText
       .split(",")
@@ -99,9 +121,15 @@ export function ReportForm() {
           if (event.event === "progress") {
             setProgressMessage(event.message);
           } else if (event.event === "result") {
-            setResult({ report: event.report, message: event.message, isError: event.status === "error" });
-            loadConversations();
-            if (event.conversation_id) selectConversation(event.conversation_id);
+            setResult({
+              report: event.report,
+              message: event.message,
+              isError: event.status === "error",
+              errorCode: event.error_code ?? null,
+              conversationId: event.conversation_id,
+            });
+            if (event.error_code === "source_not_configured") loadSourceStatus();
+            loadConversations().catch(() => {});
           }
         },
       );
@@ -113,165 +141,189 @@ export function ReportForm() {
     }
   }
 
+  const canSubmit = !isSubmitting && !!companyId && !!startDate && !!endDate && !dateError && !sourceBlocked;
+
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
-      <h1 className="text-lg font-semibold text-slate-900">Generar informe (formulario)</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        Genera un informe con parámetros exactos — misma lógica interna que el chat, resultado reproducible.
-      </p>
+    <div className="space-y-5">
+      {sourceBlocked && <SourceNotConfiguredNotice missing={sourceStatus?.missing} />}
+      {loadError && <Alert tone="danger">{loadError}</Alert>}
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <FormSection title="Empresa y período">
-          <div className="grid grid-cols-2 gap-4">
-            <label className={labelClass}>
-              Empresa
-              <select
-                value={companyId}
-                onChange={(e) => setCompanyId(e.target.value)}
-                required
-                className={selectClass}
-              >
-                <option value="" disabled>
-                  Selecciona una empresa
-                </option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <Card>
+          <CardHeader title="1. Empresa y período" description="¿De quién y de qué fechas es el informe?" />
+          <CardBody className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Empresa"
+              hint={selectedCompany?.consecutivo ? `Serie de alarmas: ${selectedCompany.consecutivo}` : undefined}
+            >
+              {(props) => (
+                <select {...props} value={companyId} onChange={(e) => setCompanyId(e.target.value)} required className="field-input">
+                  <option value="" disabled>
+                    {companies.length ? "Selecciona una empresa" : "Cargando empresas…"}
                   </option>
-                ))}
-              </select>
-              {selectedCompany?.consecutivo && (
-                <span className="mt-1 block text-xs text-slate-400">
-                  Serie de alarmas: {selectedCompany.consecutivo}
-                </span>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
               )}
-            </label>
-
-            <label className={labelClass}>
-              Formato de salida
-              <select value={format} onChange={(e) => setFormat(e.target.value)} className={selectClass}>
-                <option value="docx">Word (.docx)</option>
-                <option value="pdf">PDF (.pdf)</option>
-              </select>
-            </label>
-
-            <label className={labelClass}>
-              Fecha inicial
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                required
-                aria-invalid={!!dateError}
-                className={selectClass}
-              />
-            </label>
-
-            <label className={labelClass}>
-              Fecha final
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                required
-                aria-invalid={!!dateError}
-                className={selectClass}
-              />
-            </label>
-          </div>
-          {dateError && (
-            <p role="alert" className="mt-2 flex items-center gap-1.5 text-xs text-red-600">
-              <IconAlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              {dateError}
-            </p>
-          )}
-        </FormSection>
-
-        <FormSection title="Configuración del informe">
-          <div className="grid grid-cols-2 gap-4">
-            <label className={labelClass}>
-              Tipo de informe
-              <select value={reportType} onChange={(e) => setReportType(e.target.value)} className={selectClass}>
-                {templates.map((t) => (
-                  <option key={t.key} value={t.key}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className={labelClass}>
-              Nivel de detalle
-              <select value={audience} onChange={(e) => setAudience(e.target.value)} className={selectClass}>
-                {AUDIENCES.map((a) => (
-                  <option key={a.value} value={a.value}>
-                    {a.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </FormSection>
-
-        <FormSection title="Filtros (opcional)">
-          <label className={labelClass}>
-            Categorías de alertas
-            <input
-              type="text"
-              value={categoriesText}
-              onChange={(e) => setCategoriesText(e.target.value)}
-              placeholder="ej. Agente desconectado, Exfiltración por servicio web"
-              className={selectClass}
-            />
-            <span className="mt-1 block text-xs text-slate-400">
-              Separadas por coma. Déjalo vacío para incluir todas las categorías.
-            </span>
-          </label>
-
-          <div className="mt-4">
-            <span className={labelClass}>Severidad</span>
-            <div className="mt-1.5 flex flex-wrap gap-3">
-              {RISK_LEVELS.map((level) => (
-                <label key={level} className="flex items-center gap-1.5 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={riskLevels.includes(level)}
-                    onChange={() => toggleRiskLevel(level)}
-                    className="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
-                  />
-                  {level}
-                </label>
+            </Field>
+            <Field label="Formato de salida">
+              {(props) => (
+                <select {...props} value={format} onChange={(e) => setFormat(e.target.value)} className="field-input">
+                  <option value="docx">Word (.docx)</option>
+                  <option value="pdf">PDF (.pdf)</option>
+                </select>
+              )}
+            </Field>
+            <Field label="Fecha inicial" error={dateError}>
+              {(props) => (
+                <input {...props} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required className="field-input" />
+              )}
+            </Field>
+            <Field label="Fecha final">
+              {(props) => (
+                <input {...props} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required className="field-input" />
+              )}
+            </Field>
+            <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
+              <span className="text-xs text-fg-subtle">Atajos:</span>
+              {periodPresets.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => {
+                    setStartDate(p.start);
+                    setEndDate(p.end);
+                  }}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    startDate === p.start && endDate === p.end
+                      ? "border-primary bg-primary-subtle text-primary-subtle-fg"
+                      : "border-line text-fg-muted hover:border-line-strong hover:text-fg"
+                  }`}
+                >
+                  {p.label}
+                </button>
               ))}
             </div>
-            <span className="mt-1 block text-xs text-slate-400">Sin selección = todos los niveles.</span>
-          </div>
-        </FormSection>
+          </CardBody>
+        </Card>
 
-        <button
-          type="submit"
-          disabled={isSubmitting || !companyId || !startDate || !endDate || !!dateError}
-          className="rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isSubmitting ? "Generando..." : "Generar informe"}
-        </button>
+        <Card>
+          <CardHeader title="2. Tipo de informe" description="Plantilla y nivel de detalle del documento." />
+          <CardBody className="grid gap-4 sm:grid-cols-2">
+            <Field label="Tipo de informe">
+              {(props) => (
+                <select {...props} value={reportType} onChange={(e) => setReportType(e.target.value)} className="field-input">
+                  {templates.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+            <Field label="Nivel de detalle">
+              {(props) => (
+                <select {...props} value={audience} onChange={(e) => setAudience(e.target.value)} className="field-input">
+                  {AUDIENCES.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="3. Filtros" description="Opcionales: sin filtros se incluyen todas las alertas del período." />
+          <CardBody className="space-y-4">
+            <Field label="Categorías de alertas" optional hint="Separadas por coma. Vacío = todas las categorías.">
+              {(props) => (
+                <input
+                  {...props}
+                  type="text"
+                  value={categoriesText}
+                  onChange={(e) => setCategoriesText(e.target.value)}
+                  placeholder="ej. Agente desconectado, Exfiltración por servicio web"
+                  className="field-input"
+                />
+              )}
+            </Field>
+            <fieldset>
+              <legend className="mb-1.5 text-sm font-medium text-fg">Severidad</legend>
+              <div className="flex flex-wrap gap-2">
+                {RISK_LEVELS.map((level) => {
+                  const checked = riskLevels.includes(level.value);
+                  return (
+                    <label
+                      key={level.value}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+                        checked ? "border-primary bg-primary-subtle text-primary-subtle-fg" : "border-line text-fg-muted hover:border-line-strong"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleRiskLevel(level.value)}
+                        className="h-3.5 w-3.5 accent-[rgb(var(--primary))]"
+                      />
+                      {level.label}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-xs text-fg-subtle">Sin selección = todos los niveles.</p>
+            </fieldset>
+          </CardBody>
+        </Card>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" disabled={!canSubmit} loading={isSubmitting} icon={<IconFilePlus className="h-4 w-4" aria-hidden="true" />}>
+            {isSubmitting ? "Generando informe…" : "Generar informe"}
+          </Button>
+          {!isSubmitting && !canSubmit && !sourceBlocked && (
+            <span className="text-xs text-fg-subtle">Completa la empresa y el período para continuar.</span>
+          )}
+        </div>
       </form>
 
       {isSubmitting && progressMessage && (
-        <div className="mt-5">
+        <Card className="px-5 py-4">
           <ProgressStatus message={progressMessage} />
-        </div>
+          <p className="mt-2 pl-10 text-xs text-fg-subtle">Puedes seguir usando la aplicación; el informe se guarda al terminar.</p>
+        </Card>
       )}
 
       {result && (
-        <div className="mt-5">
-          <p
-            role={result.isError ? "alert" : undefined}
-            className={`flex items-center gap-1.5 text-sm ${result.isError ? "text-red-600" : "text-slate-700"}`}
-          >
-            {result.isError && <IconAlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />}
-            {result.message}
-          </p>
-          {result.report && <ReportCard report={result.report} showQuickActions={false} />}
+        <div className="space-y-3" aria-live="polite">
+          {result.errorCode === "source_not_configured" ? (
+            <SourceNotConfiguredNotice missing={sourceStatus?.missing} />
+          ) : (
+            <Alert tone={result.isError ? "danger" : "success"} title={result.isError ? "No se pudo generar el informe" : "Informe listo"}>
+              <span className="whitespace-pre-wrap">{result.message}</span>
+            </Alert>
+          )}
+          {result.report && (
+            <div className="flex flex-wrap items-end gap-3">
+              <ReportCard report={result.report} showQuickActions={false} />
+              {result.conversationId && (
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    await selectConversation(result.conversationId!);
+                    navigate("/asistente");
+                  }}
+                  icon={<IconArrowRight className="h-4 w-4" aria-hidden="true" />}
+                >
+                  Ajustarlo con el asistente
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

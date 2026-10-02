@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import * as api from "../services/api";
 import { useConversationStore } from "../store/useConversationStore";
 import type { ChatMessage, Company } from "../types";
-import { IconFileText, IconSend } from "./icons";
+import { IconBot, IconSend } from "./icons";
 import { MessageBubble } from "./MessageBubble";
 import { ProgressStatus } from "./ProgressStatus";
+import { Alert } from "./ui/Alert";
+import { Spinner } from "./ui/Spinner";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
@@ -38,52 +40,46 @@ export function ChatWindow() {
       .listCompanies()
       .then((companies) => setSuggestions(buildSuggestions(companies[0])))
       .catch(() => {
-        // Keep the generic fallback suggestions -- the input still works fine
-        // without a company to name in the example prompt.
+        // keep the generic suggestions: the input works without a company name
       });
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView?.({ behavior: "smooth" });
   }, [messages, progressMessage]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const content = input.trim();
-    if (!content || isStreaming) return;
+  async function submit(content: string) {
+    if (!content.trim() || isStreaming) return;
     setInput("");
-    await sendUserMessage(content);
-  };
-
-  const handleSuggestionClick = async (prompt: string) => {
-    if (isStreaming) return;
-    await sendUserMessage(prompt);
-  };
+    await sendUserMessage(content.trim());
+  }
 
   return (
     <div className="flex h-full flex-1 flex-col">
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {isLoadingConversation && (
-            <div className="mt-16 flex flex-col items-center gap-2 text-slate-400" role="status">
-              <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-500" />
-              <p className="text-sm">Cargando conversación...</p>
+            <div className="mt-16 flex flex-col items-center gap-2 text-fg-subtle" role="status">
+              <Spinner className="h-5 w-5 text-primary" />
+              <p className="text-sm">Cargando conversación…</p>
             </div>
           )}
           {!isLoadingConversation && messages.length === 0 && (
-            <div className="mt-16 text-center">
-              <IconFileText className="mx-auto h-8 w-8 text-slate-300" aria-hidden="true" />
-              <p className="mt-3 text-lg font-medium text-slate-400">Generador de Informes de Seguridad IA</p>
-              <p className="mt-1 text-sm text-slate-400">
-                Describe el informe que necesitas, o prueba una de estas sugerencias:
+            <div className="mt-10 text-center sm:mt-16">
+              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-subtle text-primary-subtle-fg">
+                <IconBot className="h-6 w-6" aria-hidden="true" />
+              </span>
+              <p className="mt-4 text-lg font-semibold text-fg">¿Qué informe necesitas?</p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-fg-muted">
+                Pide un informe, ajusta uno existente o haz preguntas sobre las alarmas. Prueba con:
               </p>
-              <div className="mx-auto mt-5 flex max-w-xl flex-wrap justify-center gap-2">
+              <div className="mx-auto mt-6 grid max-w-2xl gap-2 sm:grid-cols-2">
                 {suggestions.map((prompt) => (
                   <button
                     key={prompt}
-                    onClick={() => handleSuggestionClick(prompt)}
+                    onClick={() => submit(prompt)}
                     disabled={isStreaming}
-                    className="rounded-full border border-slate-300 bg-white px-4 py-2 text-left text-sm text-slate-700 transition-colors hover:border-brand-400 hover:bg-brand-50 disabled:opacity-40"
+                    className="rounded-xl border border-line bg-surface px-4 py-3 text-left text-sm text-fg shadow-card transition-colors hover:border-primary/50 hover:bg-primary-subtle/40 disabled:opacity-40"
                   >
                     {prompt}
                   </button>
@@ -93,32 +89,45 @@ export function ChatWindow() {
           )}
           {!isLoadingConversation && messages.map((m) => <MessageBubble key={m.id} message={m} />)}
           {isStreaming && progressMessage && <ProgressStatus message={progressMessage} />}
-          {error && (
-            <p role="alert" className="text-sm text-red-600">
-              {error}
-            </p>
-          )}
+          {error && <Alert tone="danger">{error}</Alert>}
           <div ref={bottomRef} />
         </div>
       </div>
-      <form onSubmit={handleSubmit} className="border-t border-slate-200 bg-white p-4">
-        <div className="mx-auto flex max-w-3xl items-center gap-2">
-          <input
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit(input);
+        }}
+        className="border-t border-line bg-surface p-3 sm:p-4"
+      >
+        <div className="mx-auto flex max-w-3xl items-end gap-2">
+          <label className="sr-only" htmlFor="chat-input">
+            Mensaje
+          </label>
+          <textarea
+            id="chat-input"
             value={input}
+            rows={1}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Describe el informe de seguridad que necesitas..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit(input);
+              }
+            }}
+            placeholder="Describe el informe o haz una pregunta… (Enter para enviar)"
             aria-label="Mensaje"
-            className="flex-1 rounded-full border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+            className="field-input max-h-40 min-h-[42px] flex-1 resize-none rounded-xl py-2.5"
             disabled={isStreaming}
           />
           <button
             type="submit"
             disabled={isStreaming || !input.trim()}
             aria-label="Enviar"
-            className="flex items-center gap-1.5 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:opacity-40"
+            className="flex h-[42px] items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-medium text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-40"
           >
-            Enviar
-            <IconSend className="h-3.5 w-3.5" aria-hidden="true" />
+            {isStreaming ? <Spinner className="h-4 w-4" /> : <IconSend className="h-4 w-4" aria-hidden="true" />}
+            <span className="hidden sm:inline">Enviar</span>
           </button>
         </div>
       </form>

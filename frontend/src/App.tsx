@@ -1,96 +1,97 @@
-import { useEffect, useState } from "react";
-import { ChatWindow } from "./components/ChatWindow";
-import { IconFileText, IconMenu } from "./components/icons";
-import { Login } from "./components/Login";
-import { ReportForm } from "./components/ReportForm";
-import { Sidebar } from "./components/Sidebar";
+import { useEffect, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { IconShield } from "./components/icons";
+import { Spinner } from "./components/ui/Spinner";
+import { AppShell } from "./layout/AppShell";
+import { AssistantPage } from "./pages/AssistantPage";
+import { AuditPage } from "./pages/AuditPage";
+import { DocsPage } from "./pages/DocsPage";
+import { FaqPage } from "./pages/FaqPage";
+import { GenerateReportPage } from "./pages/GenerateReportPage";
+import { HomePage } from "./pages/HomePage";
+import { LoginPage } from "./pages/LoginPage";
+import { ObservabilityPage } from "./pages/ObservabilityPage";
+import { ReportsPage } from "./pages/ReportsPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { SourceSettingsPage } from "./pages/SourceSettingsPage";
+import { ForbiddenPage, NotFoundPage } from "./pages/StatusPages";
 import { useAuthStore } from "./store/useAuthStore";
-import { useConversationStore } from "./store/useConversationStore";
+import { usePreferencesStore } from "./store/usePreferencesStore";
 
-type View = "chat" | "form";
-
-const VIEWS: { key: View; label: string }[] = [
-  { key: "chat", label: "Chat" },
-  { key: "form", label: "Formulario" },
-];
-
-function App() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const loadConversations = useConversationStore((s) => s.loadConversations);
-  const [view, setView] = useState<View>("chat");
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  useEffect(() => {
-    if (isAuthenticated) loadConversations();
-  }, [isAuthenticated, loadConversations]);
-
-  if (!isAuthenticated) {
-    return <Login />;
-  }
-
+function FullScreenLoader() {
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50">
-      {/* Off-canvas on narrow screens (below lg): a fixed drawer + backdrop,
-          toggled by the header's menu button. Static/always-visible on lg+,
-          where the sidebar has room to sit alongside the content. */}
-      {isSidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-slate-900/30 lg:hidden"
-          onClick={() => setIsSidebarOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-      <div
-        className={`fixed inset-y-0 left-0 z-40 transition-transform lg:static lg:translate-x-0 ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <Sidebar onNavigate={() => setIsSidebarOpen(false)} />
-      </div>
-
-      <div className="flex h-full flex-1 flex-col overflow-hidden">
-        <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsSidebarOpen(true)}
-              aria-label="Abrir menú de conversaciones"
-              className="-ml-1 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"
-            >
-              <IconMenu className="h-5 w-5" />
-            </button>
-            <IconFileText className="hidden h-5 w-5 shrink-0 text-brand-500 sm:block" aria-hidden="true" />
-            <div className="min-w-0">
-              <h1 className="truncate text-sm font-semibold text-slate-900">
-                Generador de Informes de Seguridad
-              </h1>
-              <p className="hidden text-xs text-slate-400 sm:block">Centro de Operaciones de Seguridad</p>
-            </div>
-          </div>
-
-          <div role="tablist" aria-label="Modalidad de generación" className="flex shrink-0 rounded-lg bg-slate-100 p-1">
-            {VIEWS.map((v) => (
-              <button
-                key={v.key}
-                role="tab"
-                aria-selected={view === v.key}
-                onClick={() => setView(v.key)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:px-4 ${
-                  view === v.key
-                    ? "bg-white text-slate-900 shadow-sm"
-                    : "text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                {v.label}
-              </button>
-            ))}
-          </div>
-        </header>
-        <div className="flex-1 overflow-hidden" role="tabpanel">
-          {view === "chat" ? <ChatWindow /> : <div className="h-full overflow-y-auto"><ReportForm /></div>}
-        </div>
-      </div>
+    <div className="flex h-screen flex-col items-center justify-center gap-3 bg-canvas" role="status">
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500">
+        <IconShield className="h-5 w-5 text-white" aria-hidden="true" />
+      </span>
+      <span className="flex items-center gap-2 text-sm text-fg-muted">
+        <Spinner className="h-4 w-4 text-primary" /> Verificando tu sesión…
+      </span>
     </div>
   );
 }
 
-export default App;
+/** Route protection: no session -> /login (remembering where the user was going). */
+function RequireAuth({ children }: { children: ReactNode }) {
+  const status = useAuthStore((s) => s.status);
+  const location = useLocation();
+  if (status === "loading") return <FullScreenLoader />;
+  if (status !== "signed_in") return <Navigate to="/login" replace state={{ from: location.pathname + location.hash }} />;
+  return <>{children}</>;
+}
+
+/** Admin-only screens (the backend enforces the same rule on every request). */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const isAdmin = useAuthStore((s) => s.me?.is_admin);
+  return isAdmin ? <>{children}</> : <ForbiddenPage />;
+}
+
+export default function App() {
+  const init = useAuthStore((s) => s.init);
+  const status = useAuthStore((s) => s.status);
+  const loadPreferences = usePreferencesStore((s) => s.load);
+
+  useEffect(() => init(), [init]);
+  useEffect(() => {
+    if (status === "signed_in") loadPreferences();
+  }, [status, loadPreferences]);
+
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        element={
+          <RequireAuth>
+            <AppShell />
+          </RequireAuth>
+        }
+      >
+        <Route index element={<HomePage />} />
+        <Route path="informes" element={<ReportsPage />} />
+        <Route path="informes/nuevo" element={<GenerateReportPage />} />
+        <Route path="asistente" element={<AssistantPage />} />
+        <Route path="fuente-de-datos" element={<SourceSettingsPage />} />
+        <Route
+          path="observabilidad"
+          element={
+            <RequireAdmin>
+              <ObservabilityPage />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="auditoria"
+          element={
+            <RequireAdmin>
+              <AuditPage />
+            </RequireAdmin>
+          }
+        />
+        <Route path="faq" element={<FaqPage />} />
+        <Route path="documentacion" element={<DocsPage />} />
+        <Route path="configuracion" element={<SettingsPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+    </Routes>
+  );
+}

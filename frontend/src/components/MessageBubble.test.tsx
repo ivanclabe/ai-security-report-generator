@@ -21,13 +21,13 @@ describe("MessageBubble", () => {
     );
     expect(screen.getByText("ACME Report")).toBeInTheDocument();
     expect(screen.getByText("v2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Descargar Informe (.docx)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Descargar (.docx)" })).toBeInTheDocument();
   });
 
   it("applies error styling when the message is flagged as an error", () => {
     render(
       <MessageBubble message={{ id: "3", role: "assistant", content: "Something failed", isError: true }} />,
     );
-    expect(screen.getByText("Something failed").className).toContain("bg-red-50");
+    expect(screen.getByText("Something failed").className).toContain("bg-danger-subtle");
   });
 });

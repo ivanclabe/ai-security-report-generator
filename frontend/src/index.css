@@ -2,12 +2,136 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---- Design tokens -------------------------------------------------------------
+   RGB triplets so Tailwind can apply opacity (bg-primary/10). Light and dark are
+   tuned separately: dark uses lifted greens and softened text for contrast on
+   near-black surfaces (WCAG AA for text on surface in both themes). */
+:root {
+  color-scheme: light;
+  --canvas: 246 248 247;
+  --surface: 255 255 255;
+  --surface-2: 241 244 242;
+  --surface-3: 230 235 232;
+  --line: 222 228 225;
+  --line-strong: 194 203 198;
+  --fg: 16 24 20;
+  --fg-muted: 74 87 80;
+  --fg-subtle: 112 125 118;
+  --fg-inverse: 255 255 255;
+  --primary: 0 83 42;
+  --primary-hover: 0 66 33;
+  --primary-fg: 255 255 255;
+  --primary-subtle: 228 241 233;
+  --primary-subtle-fg: 0 77 39;
+  --danger: 190 30 30;
+  --danger-subtle: 254 242 242;
+  --danger-fg: 153 27 27;
+  --warning: 180 83 9;
+  --warning-subtle: 255 248 230;
+  --warning-fg: 133 62 8;
+  --success: 22 128 61;
+  --success-subtle: 236 253 243;
+  --success-fg: 20 100 50;
+  --info: 29 78 216;
+  --info-subtle: 238 244 255;
+  --info-fg: 30 64 175;
+  --ring: 0 120 62;
+  --shadow: 15 30 22;
+  --nav: 255 255 255;
+  --nav-fg: 30 41 35;
+  --nav-muted: 104 118 111;
+  --nav-hover: 241 244 242;
+  --nav-active: 228 241 233;
+  --nav-active-fg: 0 77 39;
+}
+
+.dark {
+  color-scheme: dark;
+  --canvas: 10 14 12;
+  --surface: 18 24 21;
+  --surface-2: 25 32 29;
+  --surface-3: 34 43 39;
+  --line: 40 50 45;
+  --line-strong: 62 75 68;
+  --fg: 230 237 233;
+  --fg-muted: 166 180 173;
+  --fg-subtle: 126 140 133;
+  --fg-inverse: 10 14 12;
+  --primary: 58 170 106;
+  --primary-hover: 82 192 128;
+  --primary-fg: 5 22 13;
+  --primary-subtle: 19 46 32;
+  --primary-subtle-fg: 140 218 172;
+  --danger: 248 113 113;
+  --danger-subtle: 54 20 22;
+  --danger-fg: 252 170 170;
+  --warning: 245 180 60;
+  --warning-subtle: 52 38 12;
+  --warning-fg: 250 210 120;
+  --success: 74 210 128;
+  --success-subtle: 16 46 30;
+  --success-fg: 150 230 180;
+  --info: 110 165 250;
+  --info-subtle: 20 34 62;
+  --info-fg: 170 200 252;
+  --ring: 82 192 128;
+  --shadow: 0 0 0;
+  --nav: 14 19 17;
+  --nav-fg: 222 230 226;
+  --nav-muted: 132 146 139;
+  --nav-hover: 25 32 29;
+  --nav-active: 21 52 36;
+  --nav-active-fg: 150 225 180;
+}
+
 html,
 body,
 #root {
   height: 100%;
 }
 
+/* Density preference: everything is rem-based, so the root size scales the UI. */
+html {
+  font-size: 15px;
+}
+html[data-density="compact"] {
+  font-size: 13.5px;
+}
+
 body {
-  @apply bg-slate-50 text-slate-900;
+  @apply bg-canvas text-fg antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Reduced motion: the OS setting or the user's preference in Configuración. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--ring));
+  outline-offset: 2px;
+}
+
+@layer components {
+  .field-input {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg shadow-sm outline-none transition-colors placeholder:text-fg-subtle hover:border-line-strong focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-fg-subtle;
+  }
+  .table-base {
+    @apply w-full border-collapse text-left text-sm;
+  }
+  .table-base th {
+    @apply border-b border-line bg-surface-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-fg-muted;
+  }
+  .table-base td {
+    @apply border-b border-line px-3 py-2.5 align-top text-fg;
+  }
+  .table-base tbody tr:hover td {
+    @apply bg-surface-2/60;
+  }
 }

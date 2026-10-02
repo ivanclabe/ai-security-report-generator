@@ -1,142 +1,138 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
+import { supabase } from "../lib/supabase";
 import type {
+  AgentExecution,
+  AuditFilters,
+  AuditPage,
   Company,
   ConversationSummary,
   GenerateReportRequest,
-  LoginResponse,
+  Me,
   MessageOut,
+  ObservabilitySummary,
+  OpsEvent,
+  PreferencesPayload,
+  RecentReport,
   ReportInfo,
   ReportTemplate,
+  RequestRecord,
+  RequestStats,
   SaveSourceSettingsResult,
   SourceConnectionTest,
   SourceSettings,
   SourceSettingsInput,
+  SourceStatus,
   StreamEvent,
 } from "../types";
 
 const BASE_URL = "/api";
-const TOKEN_STORAGE_KEY = "ai_report_gen_token";
 
-let authToken: string | null = readStoredToken();
-let onUnauthorized: (() => void) | null = null;
+/** An API failure with the backend's machine-readable code (e.g. "session_expired"). */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public code: string | null = null,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 
-function readStoredToken(): string | null {
+let onAuthFailure: ((code: string | null) => void) | null = null;
+
+/** Called when the backend rejects the session (401): the auth store signs out. */
+export function setAuthFailureHandler(handler: ((code: string | null) => void) | null) {
+  onAuthFailure = handler;
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  // getSession() returns a refreshed session when the access token is about to expire.
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function toApiError(res: Response): Promise<ApiError> {
+  let message = `Error ${res.status}`;
+  let code: string | null = null;
   try {
-    return localStorage.getItem(TOKEN_STORAGE_KEY);
+    const body = (await res.json()) as { detail?: unknown };
+    const detail = body.detail;
+    if (typeof detail === "string") message = detail;
+    else if (detail && typeof detail === "object" && "message" in detail) {
+      message = String((detail as { message: unknown }).message);
+      code = "code" in detail ? String((detail as { code: unknown }).code) : null;
+    } else if (Array.isArray(detail)) message = "Revisa los datos ingresados.";
   } catch {
-    return null;
+    // not JSON: keep the status-based message
   }
+  if (res.status === 401) onAuthFailure?.(code);
+  if (res.status >= 500 && message.startsWith("Error ")) {
+    message = "El servidor tuvo un problema. Intenta de nuevo en unos segundos.";
+  }
+  return new ApiError(res.status, message, code);
 }
 
-export function setAuthToken(token: string | null) {
-  authToken = token;
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let res: Response;
   try {
-    if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
-    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(await authHeaders()), ...(init.headers ?? {}) },
+    });
   } catch {
-    // localStorage unavailable (private mode, etc.) -- token still works for this session
+    throw new ApiError(0, "No hay conexión con el servidor. Revisa tu red e intenta de nuevo.");
+  }
+  if (!res.ok) throw await toApiError(res);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+const json = (body: unknown) => JSON.stringify(body);
+
+// ---- identity -----------------------------------------------------------------------
+
+export const getMe = () => request<Me>("/me");
+export const getPreferences = () => request<PreferencesPayload>("/me/preferences");
+export const savePreferences = (payload: PreferencesPayload) =>
+  request<PreferencesPayload>("/me/preferences", { method: "PUT", body: json(payload) });
+export const reportSessionEvent = (event: "login" | "logout") =>
+  request<void>("/me/session-events", { method: "POST", body: json({ event }) });
+
+/** No session exists yet when a sign-in fails: this endpoint is public and rate-limited. */
+export async function reportAuthFailure(action: "login_failed" | "session_expired", email: string, reason: string) {
+  try {
+    await fetch(`${BASE_URL}/auth/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: json({ action, email: email || null, reason: reason.slice(0, 200) }),
+    });
+  } catch {
+    // best effort: auditing a failure must never block the login screen
   }
 }
 
-export function getAuthToken(): string | null {
-  return authToken;
-}
+// ---- conversations & reports -----------------------------------------------------
 
-export function setUnauthorizedHandler(handler: (() => void) | null) {
-  onUnauthorized = handler;
-}
+export const createConversation = (title?: string) =>
+  request<ConversationSummary>("/conversations", { method: "POST", body: json({ title: title ?? null }) });
+export const listConversations = () => request<ConversationSummary[]>("/conversations");
+export const getConversation = (id: string) =>
+  request<ConversationSummary & { messages: MessageOut[]; report: ReportInfo | null }>(`/conversations/${id}`);
+export const renameConversation = (id: string, title: string) =>
+  request<ConversationSummary>(`/conversations/${id}`, { method: "PATCH", body: json({ title }) });
+export const setConversationPinned = (id: string, isPinned: boolean) =>
+  request<ConversationSummary>(`/conversations/${id}/pin`, { method: "PATCH", body: json({ is_pinned: isPinned }) });
+export const deleteConversation = (id: string) => request<void>(`/conversations/${id}`, { method: "DELETE" });
 
-function authHeaders(): Record<string, string> {
-  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
-}
+export const listRecentReports = (limit = 20) => request<RecentReport[]>(`/reports?limit=${limit}`);
+export const listCompanies = () => request<Company[]>("/companies");
+export const listReportTemplates = () => request<ReportTemplate[]>("/report-templates");
 
-async function json<T>(res: Response): Promise<T> {
-  if (res.status === 401) {
-    setAuthToken(null);
-    onUnauthorized?.();
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`Request failed (${res.status}): ${text}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-export async function login(username: string, password: string): Promise<LoginResponse> {
-  const res = await fetch(`${BASE_URL}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  return json(res);
-}
-
-export async function createConversation(title?: string): Promise<ConversationSummary> {
-  const res = await fetch(`${BASE_URL}/conversations`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ title: title ?? null }),
-  });
-  return json(res);
-}
-
-export async function listConversations(): Promise<ConversationSummary[]> {
-  const res = await fetch(`${BASE_URL}/conversations`, { headers: authHeaders() });
-  return json(res);
-}
-
-export async function getConversation(
-  conversationId: string,
-): Promise<ConversationSummary & { messages: MessageOut[]; report: ReportInfo | null }> {
-  const res = await fetch(`${BASE_URL}/conversations/${conversationId}`, { headers: authHeaders() });
-  return json(res);
-}
-
-export async function renameConversation(
-  conversationId: string,
-  title: string,
-): Promise<ConversationSummary> {
-  const res = await fetch(`${BASE_URL}/conversations/${conversationId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ title }),
-  });
-  return json(res);
-}
-
-export async function setConversationPinned(
-  conversationId: string,
-  isPinned: boolean,
-): Promise<ConversationSummary> {
-  const res = await fetch(`${BASE_URL}/conversations/${conversationId}/pin`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ is_pinned: isPinned }),
-  });
-  return json(res);
-}
-
-export async function deleteConversation(conversationId: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/conversations/${conversationId}`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
-  if (res.status === 401) {
-    setAuthToken(null);
-    onUnauthorized?.();
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`Request failed (${res.status}): ${text}`);
-  }
-}
-
-export async function downloadReport(reportId: string, filename: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/reports/${reportId}/download`, { headers: authHeaders() });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`Request failed (${res.status}): ${text}`);
-  }
+async function downloadBlob(path: string, filename: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}${path}`, { headers: await authHeaders() });
+  if (!res.ok) throw await toApiError(res);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -148,127 +144,69 @@ export async function downloadReport(reportId: string, filename: string): Promis
   URL.revokeObjectURL(url);
 }
 
-export async function listCompanies(): Promise<Company[]> {
-  const res = await fetch(`${BASE_URL}/companies`, { headers: authHeaders() });
-  return json(res);
-}
+export const downloadReport = (reportId: string, filename: string) =>
+  downloadBlob(`/reports/${reportId}/download`, filename);
 
-export async function listReportTemplates(): Promise<ReportTemplate[]> {
-  const res = await fetch(`${BASE_URL}/report-templates`, { headers: authHeaders() });
-  return json(res);
-}
-
-/** Like json(), but surfaces the API's `detail` message (e.g. why an address is invalid). */
-async function jsonWithDetail<T>(res: Response): Promise<T> {
-  if (res.status === 401) {
-    setAuthToken(null);
-    onUnauthorized?.();
-  }
-  if (!res.ok) {
-    let message = `Error ${res.status}`;
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") message = body.detail;
-    } catch {
-      // not JSON -- keep the status-based message
-    }
-    throw new Error(message);
-  }
-  return res.json() as Promise<T>;
-}
-
-export async function getSourceSettings(): Promise<SourceSettings> {
-  const res = await fetch(`${BASE_URL}/source-settings`, { headers: authHeaders() });
-  return jsonWithDetail(res);
-}
-
-export async function testSourceSettings(input: SourceSettingsInput): Promise<SourceConnectionTest> {
-  const res = await fetch(`${BASE_URL}/source-settings/test`, {
+async function stream(path: string, body: unknown, onEvent: (event: StreamEvent) => void, signal?: AbortSignal) {
+  const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
+  await fetchEventSource(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(input),
+    headers,
+    body: json(body),
+    signal,
+    // One-shot POST that generates and persists a report server-side -- NOT a
+    // subscription to reopen. Without this the library aborts the fetch when the tab
+    // is backgrounded and silently re-POSTs it, duplicating the whole generation.
+    openWhenHidden: true,
+    async onopen(res) {
+      if (!res.ok) throw await toApiError(res);
+    },
+    onmessage(ev) {
+      if (!ev.data) return;
+      onEvent(JSON.parse(ev.data) as StreamEvent);
+    },
+    onerror(err) {
+      throw err;
+    },
   });
-  return jsonWithDetail(res);
 }
 
-export async function saveSourceSettings(
-  input: SourceSettingsInput,
-  skipConnectionTest = false,
-): Promise<SaveSourceSettingsResult> {
-  const res = await fetch(`${BASE_URL}/source-settings`, {
+export const generateReport = (req: GenerateReportRequest, onEvent: (e: StreamEvent) => void, signal?: AbortSignal) =>
+  stream("/reports/generate", req, onEvent, signal);
+export const sendMessage = (id: string, content: string, onEvent: (e: StreamEvent) => void, signal?: AbortSignal) =>
+  stream(`/conversations/${id}/messages`, { content }, onEvent, signal);
+
+// ---- data source -------------------------------------------------------------------
+
+export const getSourceStatus = () => request<SourceStatus>("/source-settings/status");
+export const getSourceSettings = () => request<SourceSettings>("/source-settings");
+export const testSourceSettings = (input: SourceSettingsInput) =>
+  request<SourceConnectionTest>("/source-settings/test", { method: "POST", body: json(input) });
+export const saveSourceSettings = (input: SourceSettingsInput, opts: { skipTest?: boolean; revision?: number } = {}) =>
+  request<SaveSourceSettingsResult>("/source-settings", {
     method: "PUT",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ ...input, skip_connection_test: skipConnectionTest }),
+    body: json({ ...input, skip_connection_test: !!opts.skipTest, expected_revision: opts.revision ?? null }),
   });
-  return jsonWithDetail(res);
+
+// ---- audit & observability -------------------------------------------------------------
+
+function query(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : "";
 }
 
-export async function generateReport(
-  request: GenerateReportRequest,
-  onEvent: (event: StreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  await fetchEventSource(`${BASE_URL}/reports/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(request),
-    signal,
-    // This is a one-shot POST that generates and persists a report server-side --
-    // NOT a subscription to reopen. Without this, the library aborts the fetch
-    // whenever the tab is backgrounded and silently reconnects (re-POSTs the same
-    // body) when it becomes visible again, duplicating the whole generation
-    // (found live: a PDF request takes long enough for this to actually happen).
-    openWhenHidden: true,
-    async onopen(res) {
-      if (res.status === 401) {
-        setAuthToken(null);
-        onUnauthorized?.();
-      }
-      if (!res.ok) {
-        throw new Error(`Failed to start stream (${res.status})`);
-      }
-    },
-    onmessage(ev) {
-      if (!ev.data) return;
-      const parsed = JSON.parse(ev.data) as StreamEvent;
-      onEvent(parsed);
-    },
-    onerror(err) {
-      throw err;
-    },
-  });
-}
+export const listAudit = (filters: AuditFilters, limit: number, offset: number) =>
+  request<AuditPage>(`/audit${query({ ...filters, limit, offset })}`);
+export const exportAudit = (filters: AuditFilters) =>
+  downloadBlob(`/audit/export.csv${query({ ...filters })}`, `auditoria-${new Date().toISOString().slice(0, 10)}.csv`);
 
-export async function sendMessage(
-  conversationId: string,
-  content: string,
-  onEvent: (event: StreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  await fetchEventSource(`${BASE_URL}/conversations/${conversationId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ content }),
-    signal,
-    // See the same option in generateReport() -- without it, backgrounding the tab
-    // during a slow generation (e.g. PDF) aborts and silently re-POSTs the message.
-    openWhenHidden: true,
-    async onopen(res) {
-      if (res.status === 401) {
-        setAuthToken(null);
-        onUnauthorized?.();
-      }
-      if (!res.ok) {
-        throw new Error(`Failed to start stream (${res.status})`);
-      }
-    },
-    onmessage(ev) {
-      if (!ev.data) return;
-      const parsed = JSON.parse(ev.data) as StreamEvent;
-      onEvent(parsed);
-    },
-    onerror(err) {
-      throw err;
-    },
-  });
-}
+export const getObservabilitySummary = () => request<ObservabilitySummary>("/observability/summary");
+export const listOpsEvents = (params: { level?: string; category?: string; q?: string; hours?: number; limit?: number }) =>
+  request<{ items: OpsEvent[]; total: number | null }>(`/observability/events${query(params)}`);
+export const listRequests = (limit = 100) =>
+  request<{ items: RequestRecord[]; stats: RequestStats }>(`/observability/requests?limit=${limit}`);
+export const listExecutions = (limit = 50) => request<{ items: AgentExecution[] }>(`/observability/executions?limit=${limit}`);
