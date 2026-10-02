@@ -113,3 +113,14 @@ async def test_get_notifications_returns_empty_not_invented(http_provider):
 async def test_email_rarity_ranking_is_reported_as_not_available(http_provider):
     company = await _tps(http_provider)
     assert await http_provider.get_top_rarity_email_recipients(company.id) is None
+
+
+async def test_source_indicators_are_exposed_through_the_provider(http_provider):
+    company = await _tps(http_provider)
+    indicators = await http_provider.get_source_indicators(company.id, START, END)
+    assert indicators.total_alarms == 169 and indicators.client == "THOMAS TGS-TPS"
+    assert await http_provider.get_source_indicators("no-existe", START, END) is None
+
+
+async def test_mock_provider_has_no_source_indicators(mock_provider):
+    assert await mock_provider.get_source_indicators("acme-corp", START, END) is None

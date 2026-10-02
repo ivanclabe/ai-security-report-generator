@@ -2,7 +2,12 @@ import pandas as pd
 
 from app.ingestion.csv_decoder import decode_alarms_csv
 from app.ingestion.normalizer import load_mitre_catalog, normalize_alarm_rows
-from tests.conftest import ALARMS_FIXTURE_PATH, MITRE_CATALOG_PATH
+from tests.conftest import (
+    ALARMS_EMPTY_EXPORT_PATH,
+    ALARMS_EXPECTED_RISK_PATH,
+    ALARMS_FIXTURE_PATH,
+    MITRE_CATALOG_PATH,
+)
 
 
 def _ingest():
@@ -34,16 +39,36 @@ def test_ingests_all_rows_with_no_warnings():
     assert result.warnings == []
 
 
-def test_risk_level_matches_source_riesgo_column_for_every_row():
-    # The real regression this guards: the Criticidad sheet's printed ranges
-    # ("50% al 69%" = Medio) read as inclusive, but the client's own labels
-    # treat exact boundary scores (50/70/90) as the tier below. If someone
-    # "fixes" risk_level_from_score back to inclusive thresholds, this fails.
+def test_risk_level_matches_the_clients_own_labels_for_every_row():
+    # The live export no longer carries a 'Riesgo' column, so the level is always
+    # computed from severity. This pins that computation to the labels the client's
+    # previous export assigned to these same 169 alarms (expected file next to the
+    # fixture) -- if the thresholds change, this shows exactly which alarms move.
+    import json
+
+    expected = json.loads(ALARMS_EXPECTED_RISK_PATH.read_text(encoding="utf-8"))["riesgo_por_alarma"]
     result = _ingest()
-    for alert in result.alerts:
-        if alert.is_voided:
-            continue
-        assert alert.raw_record["Riesgo"].strip() == alert.risk_level.value
+    mismatches = {
+        a.alarm_number: (expected[a.alarm_number], a.risk_level.value)
+        for a in result.alerts
+        if not a.is_voided and expected[a.alarm_number] != a.risk_level.value
+    }
+    assert mismatches == {}
+
+
+def test_the_live_export_has_no_riesgo_or_mitre_description_columns_and_still_normalizes():
+    df = decode_alarms_csv(ALARMS_FIXTURE_PATH.read_bytes())
+    assert "Riesgo" not in df.columns and "descripcion mitre" not in df.columns
+    result = normalize_alarm_rows(df, load_mitre_catalog(MITRE_CATALOG_PATH))
+    assert len(result.alerts) == 169
+    assert all(a.risk_level.value for a in result.alerts)
+
+
+def test_the_real_header_only_export_is_an_empty_result_with_one_explanation():
+    df = decode_alarms_csv(ALARMS_EMPTY_EXPORT_PATH.read_bytes())
+    assert len(df.columns) == 28 and df.empty
+    result = normalize_alarm_rows(df, {})
+    assert result.alerts == [] and len(result.warnings) == 1 and "no data rows" in result.warnings[0]
 
 
 def test_voided_alarms_have_no_severity_score():

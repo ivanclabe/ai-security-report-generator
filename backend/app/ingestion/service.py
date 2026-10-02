@@ -12,6 +12,12 @@ Why a cache: building one report asks the provider for the same company/period
 not become an HTTP request. Entries expire after SOURCE_CACHE_TTL_SECONDS for
 fresh fetches but are kept (bounded) for alarm lookups by number, so the agent
 can still cite an alarm from a report generated a few minutes ago.
+
+Two sources, one truth: the detailed alarms come from the CSV export; the
+source's own indicators page (indicadores.php) states how many alarms it counts
+for the same company/period. Every fresh alarms download is reconciled against
+it: an empty export while the dashboard reports alarms stops the report (instead
+of producing an empty one), and any other difference is reported as a warning.
 """
 import asyncio
 import hashlib
@@ -20,21 +26,36 @@ import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
 from app.ingestion.client import SourceClient
 from app.ingestion.csv_decoder import decode_alarms_csv
-from app.ingestion.errors import SourceFormatError
+from app.ingestion.errors import SourceError, SourceFormatError
+from app.ingestion.indicators_parser import parse_indicators_page
 from app.ingestion.normalizer import normalize_alarm_rows
-from app.ingestion.requests import build_alarms_request
-from app.models.domain import Company, MitreTactic, NormalizedSecurityAlert
+from app.ingestion.requests import build_alarms_request, build_indicators_request
+from app.models.domain import (
+    Company,
+    MitreTactic,
+    NormalizedSecurityAlert,
+    SourceIndicators,
+)
 from app.services.company_registry import normalize_company_key
 
 logger = logging.getLogger(__name__)
 
 _KEY_FORMAT = "%Y-%m-%dT%H:%M"
+
+
+def _company_keys(company: Company) -> set[str]:
+    """Every spelling under which the source may name this company."""
+    return {
+        normalize_company_key(v)
+        for v in (company.name, company.source_client, company.consecutivo, company.request_client_name)
+        if v
+    }
 
 
 @dataclass
@@ -70,7 +91,8 @@ class AlarmAcquisitionService:
         self._on_fetch = on_fetch
         self._max_entries = max_entries
         self._batches: OrderedDict[tuple[str, str, str], AlarmBatch] = OrderedDict()
-        self._locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+        self._indicators: OrderedDict[tuple[str, str, str], tuple[float, SourceIndicators]] = OrderedDict()
+        self._locks: dict[tuple, asyncio.Lock] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -96,9 +118,67 @@ class AlarmAcquisitionService:
         if self._on_fetch is not None:
             try:
                 await self._on_fetch(batch)
-            except Exception:  # noqa: BLE001 - audit trail is best-effort, must never fail a report
+            except Exception:
                 logger.warning("No se pudo registrar la importación de %s", company.name, exc_info=True)
         return batch
+
+    async def get_indicators(self, company: Company, start: date, end: date) -> SourceIndicators:
+        """The source's indicators page for one company/period (cached like the alarms)."""
+        key = (company.id, start.isoformat(), end.isoformat())
+        cached = self._indicators.get(key)
+        if cached is not None and self._clock() < cached[0]:
+            return cached[1]
+
+        async with self._locks.setdefault(("indicadores", *key), asyncio.Lock()):
+            cached = self._indicators.get(key)
+            if cached is not None and self._clock() < cached[0]:
+                return cached[1]
+            request = build_indicators_request(self._client.config, company.request_client_name, start, end)
+            indicators = parse_indicators_page((await self._client.fetch(request)).content)
+
+            if indicators.client is None:
+                indicators.warnings.append("La página de indicadores no indica qué cliente está mostrando.")
+            elif normalize_company_key(indicators.client) not in _company_keys(company):
+                raise SourceFormatError(
+                    f"La página de indicadores corresponde al cliente '{indicators.client}', no a {company.name}: "
+                    "revisa el valor de cliente= de la empresa (in_companies.source_client)."
+                )
+            sent_end = end + timedelta(days=1)  # the page's fecha_fin is exclusive (see requests.py)
+            if (indicators.start_date, indicators.end_date) not in ((start, sent_end), (None, None)):
+                indicators.warnings.append(
+                    f"La página de indicadores muestra el período {indicators.start_date} a {indicators.end_date}, "
+                    f"no el solicitado ({start} a {sent_end}, fin exclusivo)."
+                )
+            indicators.end_date = end  # expose the inclusive period the figures cover
+
+            self._indicators[key] = (self._clock() + self._client.config.cache_ttl_seconds, indicators)
+            self._indicators.move_to_end(key)
+            while len(self._indicators) > self._max_entries:
+                self._indicators.popitem(last=False)
+        return indicators
+
+    async def _reconcile(
+        self, company: Company, start: datetime, end: datetime, alerts: list[NormalizedSecurityAlert]
+    ) -> list[str]:
+        try:
+            indicators = await self.get_indicators(company, start.date(), end.date())
+        except SourceError as exc:
+            return [f"No se pudo comparar el total con el panel de indicadores de la fuente: {exc}"]
+
+        expected = indicators.total_alarms
+        if expected and not alerts:
+            raise SourceFormatError(
+                f"El panel de indicadores de la fuente reporta {expected} alarmas de {company.name} entre "
+                f"{start.date()} y {end.date()}, pero el export de alarmas (CSV) no trajo ninguna. Se detuvo la "
+                "generación para no producir un informe vacío: revisa el export detallado_alarmas "
+                "(SOURCE_ALARMS_PATH) o los permisos del usuario configurado."
+            )
+        if expected != len(alerts):
+            return [
+                f"El export de alarmas trae {len(alerts)} alarmas de {company.name} y el panel de indicadores "
+                f"de la fuente reporta {expected} para el mismo período."
+            ]
+        return []
 
     def find_alert(self, alert_id: str) -> NormalizedSecurityAlert | None:
         """Look an alarm up by id or alarm number in the batches fetched so far
@@ -132,11 +212,7 @@ class AlarmAcquisitionService:
                 f"como alarma ({detail})."
             )
 
-        accepted = {
-            normalize_company_key(v)
-            for v in (company.name, company.source_client, company.consecutivo, company.request_client_name)
-            if v
-        }
+        accepted = _company_keys(company)
         kept = [a for a in result.alerts if normalize_company_key(a.client) in accepted]
         foreign = [a for a in result.alerts if normalize_company_key(a.client) not in accepted]
         if result.alerts and not kept:
@@ -166,6 +242,9 @@ class AlarmAcquisitionService:
                 "Más de la mitad de las alarmas tienen fecha fuera del período solicitado: "
                 "revisa el formato de fecha del CSV (día/mes vs mes/día)."
             )
+
+        if config.reconcile_with_indicators:
+            warnings += await self._reconcile(company, start, end, alerts)
 
         if warnings:
             logger.warning(

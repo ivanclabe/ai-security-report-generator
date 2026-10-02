@@ -15,6 +15,7 @@ from app.models.domain import (
     EmailRarityEntry,
     NormalizedSecurityAlert,
     Notification,
+    SourceIndicators,
 )
 
 
@@ -64,4 +65,11 @@ class DataProvider(ABC):
         Not part of the core alarm model, so it's a concrete (non-abstract) method
         that defaults to "not available" rather than forcing every provider to implement it.
         """
+        return None
+
+    async def get_source_indicators(
+        self, company_id: str, start_date: datetime, end_date: datetime
+    ) -> SourceIndicators | None:
+        """The source's own dashboard figures for the period (totals, tops, per-day,
+        categories), when the provider has them. Not part of the core alarm model."""
         return None

@@ -145,7 +145,17 @@ Con la fuente HTTP aparecen credenciales de un sistema externo. Reglas aplicadas
   `tests/test_source_startup_check.py`).
 - **TLS verificado por defecto** (`SOURCE_VERIFY_TLS=true`); para un servidor interno se prefiere
   `SOURCE_CA_BUNDLE` a desactivar la verificación. En `ENVIRONMENT=production` el arranque advierte si
-  la URL es `http://` (Basic Auth viajaría en claro) o la verificación TLS está apagada.
+  la verificación TLS está apagada.
+- **La fuente real se sirve por `http://`** (`10.2.85.8`): usuario, contraseña, cookie de sesión y
+  datos de alarmas viajan **sin cifrar**. El arranque lo advierte en cualquier entorno. Mitigación
+  actual: solo por VPN/LAN. Recomendado: pedir https al proveedor (con `SOURCE_CA_BUNDLE` si usa CA
+  interna); el cambio es solo de `SOURCE_BASE_URL`.
+- **Login por formulario acotado al mismo host**: el cliente solo sigue redirecciones y solo envía el
+  formulario de login (con las credenciales) si la acción apunta al mismo host que `SOURCE_BASE_URL`;
+  una página que intente mandarlas a otro servidor se rechaza (`tests/test_source_login_form.py`).
+  Una segunda página de login seguida se trata como credencial incorrecta, sin reintentos.
+- **Fixtures sin datos reales**: los archivos de prueba (`tests/fixtures/`) son sintéticos (IPs de
+  documentación RFC 5737, host `albatrus.test`); los exports reales del cliente no se versionan.
 - **Sin bucles de autenticación**: un 401 se reintenta una sola vez y solo si antes funcionó, para no
   bloquear la cuenta de servicio contra un servidor con política de intentos fallidos.
 - **Empresa acotada por request**: el valor de `cliente=` sale del registro (nunca de texto libre

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # SOURCE_BASE_URL. Credentials are SecretStr so they never show up in
     # repr()/logs of this object.
     source_base_url: str = ""
+    # Relative to SOURCE_BASE_URL, or an absolute http(s) URL if an endpoint lives elsewhere.
     source_alarms_path: str = "/detallado_alarmas.php"
     source_indicators_path: str = "/indicadores.php"
     source_username: str = ""
@@ -39,6 +40,8 @@ class Settings(BaseSettings):
     # reported as possibly truncated.
     source_alarms_limit: int = 1000
     source_cache_ttl_seconds: int = 300
+    # Compare each alarms download with the source's indicators page (see SourceConfig).
+    source_reconcile_indicators: bool = True
 
     sqlite_checkpoint_db_path: Path = BACKEND_DIR / "agent_checkpoints.sqlite3"
 

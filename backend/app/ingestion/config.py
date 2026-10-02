@@ -24,6 +24,10 @@ class SourceConfig:
     timeout_seconds: float = 30.0
     alarms_limit: int = 1000
     cache_ttl_seconds: int = 300
+    # Cross-check every alarms download against the source's own indicators page
+    # (same company/period): an empty CSV while the dashboard reports alarms fails
+    # loudly instead of producing an empty report.
+    reconcile_with_indicators: bool = True
 
     @classmethod
     def from_settings(cls, settings) -> "SourceConfig":
@@ -38,6 +42,7 @@ class SourceConfig:
             timeout_seconds=settings.source_timeout_seconds,
             alarms_limit=settings.source_alarms_limit,
             cache_ttl_seconds=settings.source_cache_ttl_seconds,
+            reconcile_with_indicators=settings.source_reconcile_indicators,
         )
 
     @property
@@ -54,6 +59,10 @@ class SourceConfig:
         return urlsplit(self.base_url).scheme == "https"
 
     def url_for(self, path: str) -> str:
+        """Endpoint URL: the path relative to SOURCE_BASE_URL, or the path itself when
+        it is already an absolute http(s) URL (an endpoint living on another host)."""
+        if urlsplit(path).scheme in ("http", "https"):
+            return path
         return self.base_url.rstrip("/") + "/" + path.lstrip("/")
 
     def problems(self) -> list[str]:

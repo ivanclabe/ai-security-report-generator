@@ -59,21 +59,29 @@ la invoca desde los nodos del grafo LangGraph. Ver `DETERMINISTIC_FLOW.md`,
 
 ### Fuente de datos (`DATA_PROVIDER=http`) y capa de adquisición
 
-Las alarmas se piden directamente a la fuente del cliente por HTTPS con **Basic Auth**. Todo lo
-que cambia entre ambientes vive en `backend/.env` (nunca en el código ni en la base de datos):
+Las alarmas se piden directamente a la fuente del cliente (Albatrus SOC): el export CSV
+`detallado_alarmas.php` (una fila por alarma) y el panel `indicadores.php` (totales y tops, usado
+para conciliar). La fuente pide un **login por formulario**; el cliente lo completa solo con las
+credenciales del entorno. Todo lo que cambia entre ambientes vive en `backend/.env` (nunca en el
+código ni en la base de datos):
 
 ```
-SOURCE_BASE_URL=https://192.168.80.50     # cambiar la IP = editar esta línea y reiniciar
-SOURCE_USERNAME=...  SOURCE_PASSWORD=...  # solo variables de entorno
-SOURCE_VERIFY_TLS=true                    # o SOURCE_CA_BUNDLE=/ruta/ca-interna.pem
+SOURCE_BASE_URL=http://10.2.85.8/ProyectoSOC/views   # cambiar la IP = editar esta línea y reiniciar
+SOURCE_USERNAME=...  SOURCE_PASSWORD=...             # solo variables de entorno
+SOURCE_VERIFY_TLS=true                               # si es https; o SOURCE_CA_BUNDLE=/ruta/ca.pem
 ```
+
+> La fuente se sirve hoy por **http**: credenciales y datos viajan sin cifrar. Usarla solo por la
+> VPN/LAN y pedir https al proveedor (el backend lo advierte al arrancar).
 
 `backend/app/ingestion/` es una capa **separada del agente** (nada en `app/agents` ni
 `app/services/report` la importa): `config.py` (SOURCE_* → `SourceConfig`), `requests.py`
-(construye las URLs de alarmas/indicadores), `client.py` (Basic Auth, sesión reutilizable y
+(construye las URLs de alarmas/indicadores y corrige los bordes de fechas de cada endpoint),
+`client.py` (Basic Auth + login por formulario restringido al mismo host, sesión reutilizable y
 renovación si expira, errores accionables), `csv_decoder.py` (bytes → tabla; detecta HTML con
-HTTP 200), `normalizer.py` (filas → `NormalizedSecurityAlert`) y `service.py` (pide, valida que las
-filas sean de la empresa pedida, y cachea por empresa/período). `HttpSourceDataProvider` solo adapta
+HTTP 200), `normalizer.py` (filas → `NormalizedSecurityAlert`), `indicators_parser.py` (HTML del
+panel → `SourceIndicators`) y `service.py` (pide, valida que las filas sean de la empresa pedida,
+concilia el total con el panel y cachea por empresa/período). `HttpSourceDataProvider` solo adapta
 eso al contrato `DataProvider`. Ver `INGESTION_ARCHITECTURE.md` (§8) para el detalle.
 
 - **`mock`** — `MockDataProvider`, completamente sintético, sin servidor ni credenciales. Útil
@@ -142,10 +150,11 @@ Copiar `backend/.env.example` a `backend/.env` y completar:
 | `ANTHROPIC_API_KEY` | API key de Anthropic (requerida) |
 | `LLM_MODEL` | Modelo Claude a usar (default `claude-sonnet-5`) |
 | `DATA_PROVIDER` | `http` (default, fuente remota) o `mock` |
-| `SOURCE_BASE_URL` | Dirección de la fuente, p. ej. `https://192.168.80.50` — **único lugar** donde cambia la IP |
-| `SOURCE_USERNAME` / `SOURCE_PASSWORD` | Credenciales Basic Auth de la fuente (solo entorno; nunca versionar `.env`) |
+| `SOURCE_BASE_URL` | Dirección de la fuente, p. ej. `http://10.2.85.8/ProyectoSOC/views` — **único lugar** donde cambia la IP |
+| `SOURCE_USERNAME` / `SOURCE_PASSWORD` | Credenciales de la fuente, usadas en el login por formulario y como Basic Auth (solo entorno; nunca versionar `.env`) |
 | `SOURCE_VERIFY_TLS` / `SOURCE_CA_BUNDLE` | Verificación TLS (default `true`); CA propia vía `SOURCE_CA_BUNDLE` |
-| `SOURCE_ALARMS_PATH` / `SOURCE_INDICATORS_PATH` | Rutas de los endpoints (defaults `/detallado_alarmas.php`, `/indicadores.php`) |
+| `SOURCE_ALARMS_PATH` / `SOURCE_INDICATORS_PATH` | Rutas de los endpoints (defaults `/detallado_alarmas.php`, `/indicadores.php`); también aceptan una URL completa si un endpoint vive en otro host |
+| `SOURCE_RECONCILE_INDICATORS` | Conciliar cada descarga con el total del panel de indicadores (default `true`) |
 | `SOURCE_TIMEOUT_SECONDS` / `SOURCE_ALARMS_LIMIT` / `SOURCE_CACHE_TTL_SECONDS` | Timeout (30), `limite=` por request (1000) y vigencia del caché (300 s) |
 | `MOCK_DATA_PATH` / `MITRE_TACTICS_PATH` | Overrides de ruta; por defecto apuntan a `data/` en la raíz del proyecto |
 | `CORS_ORIGINS` | Lista JSON de orígenes permitidos (default `["http://localhost:5173"]`) |

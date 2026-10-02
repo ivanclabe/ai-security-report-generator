@@ -19,6 +19,7 @@ from app.models.domain import (
     EmailRarityEntry,
     NormalizedSecurityAlert,
     Notification,
+    SourceIndicators,
 )
 from app.providers.base import DataProvider
 from app.services.company_registry import CompanyRegistry
@@ -105,3 +106,11 @@ class HttpSourceDataProvider(DataProvider):
         # The alarms CSV has no precomputed email-rarity ranking (the old Excel carried one in a
         # separate sheet). Reported as "not available" so the report says so instead of guessing.
         return None
+
+    async def get_source_indicators(
+        self, company_id: str, start_date: datetime, end_date: datetime
+    ) -> SourceIndicators | None:
+        company = await self._registry.get(company_id=company_id)
+        if company is None:
+            return None
+        return await self._acquisition.get_indicators(company, start_date.date(), end_date.date())

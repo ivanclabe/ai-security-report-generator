@@ -41,7 +41,7 @@ async def test_fetches_and_normalizes_the_companys_alarms(source_server, tps):
     # requests use the registry's value for cliente= ('THOMAS TGS-TPS' for TPS)...
     assert source_server.alarm_requests[0].url.params["cliente"] == "THOMAS TGS-TPS"
     assert source_server.alarm_requests[0].url.params["desde"] == "2026-07-01T00:00"
-    assert source_server.alarm_requests[0].url.params["hasta"] == "2026-07-31T23:59"
+    assert source_server.alarm_requests[0].url.params["hasta"] == "2026-08-01T00:00"
     # ...and from then on the company carries its official report name, the source's spelling kept in raw_record
     assert {a.client for a in batch.alerts} == {"THOMAS TGS TPS"}
     assert batch.alerts[0].raw_record["cliente"] == "THOMAS TGS-TPS"
@@ -225,3 +225,74 @@ async def test_dates_far_outside_the_requested_period_hint_at_a_date_format_prob
 
     batch = await build_acquisition(source_server).get_batch(tps, *JULY)
     assert any("fuera del período" in w for w in batch.warnings)
+
+
+# ---- indicators page & reconciliation ---------------------------------------------
+
+
+async def test_every_fresh_download_is_reconciled_against_the_sources_indicators(source_server, tps):
+    batch = await build_acquisition(source_server).get_batch(tps, *JULY)
+
+    assert batch.warnings == []  # 169 in the export == 169 on the dashboard
+    request = source_server.indicator_requests[0]
+    assert dict(request.url.params) == {"cliente": "THOMAS TGS-TPS", "fecha_inicio": "2026-07-01", "fecha_fin": "2026-08-01"}
+
+
+async def test_empty_export_while_the_dashboard_reports_alarms_stops_the_report(source_server, tps):
+    # Exactly what the source delivered once: the export came back with only its header
+    # while the indicators page for the same client/period listed alarms.
+    from tests.conftest import ALARMS_EMPTY_EXPORT_PATH
+
+    source_server._alarms_for = lambda cliente: ALARMS_EMPTY_EXPORT_PATH.read_bytes()
+
+    with pytest.raises(SourceFormatError) as excinfo:
+        await build_acquisition(source_server).get_batch(tps, *JULY)
+
+    message = str(excinfo.value)
+    assert "reporta 169 alarmas" in message and "no trajo ninguna" in message
+    assert "informe vacío" in message
+
+
+async def test_a_different_total_is_reported_as_a_warning(source_server, tps):
+    source_server.indicators_total_override = 175
+    batch = await build_acquisition(source_server).get_batch(tps, *JULY)
+    assert len(batch.alerts) == 169
+    assert any("169" in w and "175" in w for w in batch.warnings)
+
+
+async def test_an_unavailable_dashboard_never_blocks_the_report(source_server, tps):
+    source_server.indicators_status = 500
+    batch = await build_acquisition(source_server).get_batch(tps, *JULY)
+    assert len(batch.alerts) == 169
+    assert any("No se pudo comparar" in w for w in batch.warnings)
+
+
+async def test_reconciliation_can_be_turned_off(source_server, tps):
+    batch = await build_acquisition(source_server, reconcile_with_indicators=False).get_batch(tps, *JULY)
+    assert batch.warnings == [] and source_server.indicator_requests == []
+
+
+async def test_indicators_are_parsed_cached_and_scoped_to_the_company(source_server, tps):
+    from datetime import date
+
+    acquisition = build_acquisition(source_server)
+    first = await acquisition.get_indicators(tps, date(2026, 7, 1), date(2026, 7, 31))
+    again = await acquisition.get_indicators(tps, date(2026, 7, 1), date(2026, 7, 31))
+
+    assert again is first and len(source_server.indicator_requests) == 1
+    assert first.client == "THOMAS TGS-TPS" and first.total_alarms == 169 and len(first.records) == 169
+    assert sum(c.count for c in first.alarms_by_day) == 169
+    assert first.top_categories and first.top_source_ips
+    # the page is asked up to 08-01 (its fecha_fin is exclusive) but the figures cover 07-01..07-31
+    assert source_server.indicator_requests[0].url.params["fecha_fin"] == "2026-08-01"
+    assert (first.start_date, first.end_date) == (date(2026, 7, 1), date(2026, 7, 31))
+    assert first.warnings == []
+
+
+async def test_an_indicators_page_for_another_client_is_rejected(source_server, tps):
+    from datetime import date
+
+    source_server.indicators_client_override = "BAC"
+    with pytest.raises(SourceFormatError) as excinfo:
+        await build_acquisition(source_server).get_indicators(tps, date(2026, 7, 1), date(2026, 7, 31))
+    assert "'BAC'" in str(excinfo.value)

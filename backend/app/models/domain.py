@@ -8,7 +8,7 @@ categorical tier derived from it via `risk_level_from_score`, mirroring the
 client's own published thresholds (see data/mitre_tactics.json's sibling,
 the Criticidad sheet, for where those thresholds came from).
 """
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -155,3 +155,56 @@ class MitreTactic(BaseModel):
 class EmailRarityEntry(BaseModel):
     email: str
     count: int
+
+
+# ---- Source indicators page (indicadores.php) -------------------------------------
+
+
+class IndicatorCount(BaseModel):
+    label: str
+    count: int
+
+
+class RiskShare(BaseModel):
+    """One row of the source's own "Tabla de Riesgo por Severidad". Note: the
+    source's dashboard uses its own severity bands (e.g. 0-25/26-50/51-75/76-100),
+    which are not the bands the report classifies alarms with."""
+
+    level: str
+    range_label: str | None = None
+    percent: float
+
+
+class IndicatorRecord(BaseModel):
+    """One alarm as listed (in reduced form) by the indicators page."""
+
+    alert_type: str
+    timestamp: datetime | None = None
+    source_ip: str | None = None
+    external_ip: str | None = None
+    hostname: str | None = None
+    description: str = ""
+    reported_by: str | None = None
+    created_at: datetime | None = None
+    severity_score: int | None = None
+
+
+class SourceIndicators(BaseModel):
+    """Everything the source's indicators page states for one client/period."""
+
+    client: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    total_alarms: int
+    principal_source_ip: str | None = None
+    risk_distribution: list[RiskShare] = []
+    alarms_by_type: list[IndicatorCount] = []
+    alarms_by_day: list[IndicatorCount] = []
+    top_categories: list[IndicatorCount] = []
+    top_source_ips: list[IndicatorCount] = []
+    top_destination_ips: list[IndicatorCount] = []
+    top_hostnames: list[IndicatorCount] = []
+    top_descriptions: list[IndicatorCount] = []
+    records: list[IndicatorRecord] = []
+    available_clients: list[str] = []
+    warnings: list[str] = []

@@ -59,9 +59,12 @@ def _check_data_source(settings) -> None:
         config.host,
         "verificado" if config.tls_verify else "SIN verificar",
     )
+    if not config.uses_https:
+        logger.warning(
+            "SECURITY: SOURCE_BASE_URL usa http:// -- las credenciales de la fuente viajan sin cifrar por la red. "
+            "Usar https:// si el servidor lo permite."
+        )
     if settings.environment == "production":
-        if not config.uses_https:
-            logger.warning("SECURITY: SOURCE_BASE_URL usa http:// -- las credenciales Basic Auth viajarían sin cifrar.")
         if not config.tls_verify:
             logger.warning("SECURITY: SOURCE_VERIFY_TLS=false en producción -- la identidad del servidor no se verifica.")
 

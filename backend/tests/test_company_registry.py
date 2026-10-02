@@ -75,8 +75,30 @@ def test_seed_rows_never_overwrite_industry_or_country():
     assert len(rows) == 18
     assert all("industry" not in r and "country" not in r for r in rows)
     assert all(r["is_active"] is True for r in rows)
-    # null => requests use the report name; only TPS is known to be spelled differently at the source
-    assert {r["name"]: r["source_client"] for r in rows if r["source_client"]} == {"THOMAS TGS TPS": "THOMAS TGS-TPS"}
+    # every company declares the exact cliente= value the source accepts
+    assert all(r["source_client"] for r in rows)
+
+
+def test_every_company_requests_a_client_name_the_source_actually_offers():
+    """The source's indicators page lists the exact cliente= values it accepts;
+    each of the 18 companies must map to one of them (a typo here silently means
+    'no alarms')."""
+    from tests.source_fakes import SOURCE_CLIENT_OPTIONS
+
+    companies = load_companies_from_file(COMPANIES_FILE_PATH)
+    mapping = {c.name: c.request_client_name for c in companies}
+    assert set(mapping.values()) <= set(SOURCE_CLIENT_OPTIONS)
+    assert len(set(mapping.values())) == 18  # no two companies share a source client
+    assert mapping["THOMAS TGS GREG & SON"] == "THOMAS TGS-GREG"
+    assert mapping["PERU SSS"] == "PERU-SSS"
+    assert mapping["THOMAS TGS LIMITED"] == "THOMAS TGS LIMITED"  # this one has no hyphen at the source
+
+
+def test_source_clients_outside_the_official_list_are_not_registered():
+    from tests.source_fakes import SOURCE_CLIENT_OPTIONS
+
+    registered = {c.request_client_name for c in load_companies_from_file(COMPANIES_FILE_PATH)}
+    assert set(SOURCE_CLIENT_OPTIONS) - registered == {"THOMAS GREG & SONS", "AIRE", "THOMAS TGS-ALTA-GERENCIA"}
 
 
 # ---- normalization & resolution -------------------------------------------

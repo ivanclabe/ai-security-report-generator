@@ -7,6 +7,7 @@ import io
 
 import pandas as pd
 
+from app.ingestion.encoding import decode_source_text
 from app.ingestion.errors import SourceFormatError
 
 _CANDIDATE_DELIMITERS = (",", ";", "\t", "|")
@@ -15,13 +16,6 @@ _CANDIDATE_DELIMITERS = (",", ";", "\t", "|")
 def looks_like_html(content: bytes) -> bool:
     head = content[:1024].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
     return head.startswith(b"<") or b"<html" in head or b"<!doctype" in head
-
-
-def _decode_text(content: bytes) -> str:
-    try:
-        return content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return content.decode("cp1252", errors="replace")
 
 
 def _detect_delimiter(header_line: str) -> str:
@@ -39,7 +33,7 @@ def decode_alarms_csv(content: bytes) -> pd.DataFrame:
             "inválidas, un parámetro rechazado o una página de error."
         )
 
-    text = _decode_text(content)
+    text = decode_source_text(content)
     header_line = text.lstrip("\r\n").split("\n", 1)[0]
     delimiter = _detect_delimiter(header_line)
     try:

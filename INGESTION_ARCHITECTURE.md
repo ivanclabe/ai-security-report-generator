@@ -229,16 +229,20 @@ aprobación para la Fase 4.
 ## 8. Estado vigente: fuente HTTP + registro de empresas
 
 ```
-Fuente remota (HTTPS, Basic Auth)
-   │  detallado_alarmas.php?desde&hasta&cliente&limite&export=csv   (+ indicadores.php)
+Fuente Albatrus SOC (http://10.2.85.8/ProyectoSOC/views, login por formulario PHP)
+   │  detallado_alarmas.php?desde&hasta&cliente&limite&export=csv   → CSV, 28 columnas (alarmas)
+   │  indicadores.php?cliente&fecha_inicio&fecha_fin                → HTML (panel de indicadores)
    ▼
 app/ingestion/   ── aislada del agente: nada en app/agents ni app/services/report la importa ──
-   config.py        SOURCE_* (.env) → SourceConfig         (IP, rutas, credenciales, TLS, límites)
-   requests.py      SourceRequest por empresa/período       (cliente= viene del registro)
-   client.py        Basic Auth + sesión reutilizable + renovación si expira + errores accionables
-   csv_decoder.py   bytes → DataFrame (BOM/cp1252, delimitador, detecta HTML con HTTP 200)
-   normalizer.py    filas → NormalizedSecurityAlert        (reglas de severidad/riesgo/MITRE)
-   service.py       pide + valida la empresa + caché (TTL) + listener on_fetch (auditoría)
+   config.py             SOURCE_* (.env) → SourceConfig    (IP, rutas, credenciales, TLS, límites)
+   requests.py           SourceRequest por empresa/período  (cliente= del registro, bordes de fechas)
+   client.py             Basic Auth + login por formulario + cookie de sesión + renovación única
+   login_form.py         detecta el formulario de login (campos ocultos/CSRF, usuario, contraseña)
+   encoding.py           UTF-8 con BOM; bytes cp1252 sueltos se traducen uno a uno
+   csv_decoder.py        bytes → DataFrame (delimitador, detecta HTML con HTTP 200)
+   normalizer.py         filas → NormalizedSecurityAlert   (reglas de severidad/riesgo/MITRE)
+   indicators_parser.py  HTML del panel → SourceIndicators (resumen, tops, por día, categorías)
+   service.py            pide + valida la empresa + concilia con el panel + caché (TTL) + auditoría
    ▼
 app/providers/http_source.py   HttpSourceDataProvider  (contrato DataProvider, sin cambios)
    ▼
@@ -255,21 +259,69 @@ devuelve la lista de candidatas. Cada request pide **una** empresa; las filas qu
 devuelva de otra empresa se descartan con una advertencia, y si ninguna es de la empresa pedida
 la adquisición falla en voz alta.
 
-**Sesión y expiración.** Basic Auth no tiene sesión propia; el cliente mantiene un `httpx.AsyncClient`
-(conexiones y cookies, p. ej. `PHPSESSID`). Un 401 después de un éxito se trata como sesión expirada:
-se descarta el cliente, se reautentica y se reintenta **una** vez; un 401 en el primer intento o en
-el reintento lanza `SourceAuthenticationError` (sin bucles de login). 403, 404, 5xx, timeouts,
-errores de TLS y redirecciones a una página de login tienen mensajes propios que nombran la
-variable de entorno a revisar, nunca las credenciales.
+**Sesión y expiración.** La fuente real no usa Basic Auth sino un formulario de login PHP
+(`PHPSESSID`). El cliente envía Basic Auth (por si un proxy la pide) y, si la respuesta es una
+redirección a una página de login o una página de login servida con 200, lee ese formulario
+(`login_form.py`: campos ocultos/CSRF incluidos), lo envía con `SOURCE_USERNAME`/`SOURCE_PASSWORD`
+y repite la petición original con la cookie de sesión. Reglas de seguridad: solo sigue redirecciones
+y solo envía el formulario **dentro del mismo host** que `SOURCE_BASE_URL` (una página que intente
+mandar las credenciales a otro servidor se rechaza); una segunda página de login seguida es
+credencial incorrecta y lanza `SourceAuthenticationError` (sin bucles). Un 401 o una vuelta al login
+después de un éxito se trata como sesión expirada: se reautentica y se reintenta **una** vez.
+403, 404, 5xx, timeouts y errores de TLS tienen mensajes propios que nombran la variable de entorno
+a revisar, nunca las credenciales.
 
 **Cambio de IP.** `SOURCE_BASE_URL` es el único lugar con la dirección; las rutas son `SOURCE_*_PATH`.
 Cambiar de servidor = editar `backend/.env` y reiniciar, sin tocar código (probado en
 `tests/test_source_client.py`).
 
+**Qué trae cada fuente.**
+
+| Fuente | Formato | Se extrae | Uso |
+|---|---|---|---|
+| `detallado_alarmas.php` | CSV UTF-8 con BOM, 28 columnas | una fila por alarma: tipo, `timestamp`, IPs, hostname, descripción, `severity`, categoría, MITRE, recomendaciones, quién reporta/autoriza, GLPI, fechas de creación y respuesta | fuente de verdad del informe (→ `NormalizedSecurityAlert`) |
+| `indicadores.php` | HTML (panel) | resumen ejecutivo (total, período, IP de origen principal), distribución de riesgo con las bandas de la fuente, tops de IP origen/destino, hostnames y descripciones, alarmas por día, categorías, registros (`const DATA`), cliente seleccionado y lista de clientes | conciliación del total y `DataProvider.get_source_indicators()` |
+
+El parser del panel lee solo marcadores estables (clase `resumen-ejecutivo`, tablas por el `h3`
+que las titula, literales JSON de los `<script>` por nombre de variable, `select[name=cliente]`),
+nunca los gráficos; una página sin esos marcadores (login, error) se rechaza.
+
+**Conciliación.** Cada descarga nueva del CSV se compara con el panel del mismo cliente y período
+(`SOURCE_RECONCILE_INDICATORS=true`). Si los totales difieren se agrega una advertencia al lote;
+si el panel lista alarmas y el CSV llega vacío, la adquisición **falla** (no se genera un informe
+vacío por un problema de exportación); si el panel no responde, se sigue con una advertencia.
+Una página de indicadores que muestre otro cliente se rechaza.
+
+**Bordes de fechas (verificados contra la fuente real).** Los dos endpoints no interpretan igual el
+fin del período, y ambos lo pierden si se envía "tal cual":
+
+* `detallado_alarmas.php` filtra por la **fecha de creación** de la alarma (`fecha_de_creacion_alarma`,
+  no `timestamp`) comparando segundos contra un `hasta` con precisión de minuto: con
+  `hasta=…T23:59` se pierden las alarmas creadas a las 23:59:xx. `requests.py` redondea el fin al
+  minuto siguiente (`2026-08-31 23:59:59` → `hasta=2026-09-01T00:00`).
+* `indicadores.php` trata `fecha_fin` como **exclusiva** (medianoche): con `fecha_fin=2026-08-31`
+  el panel de TPS mostró 166 alarmas en lugar de 182. Se envía el día siguiente y el servicio
+  devuelve `SourceIndicators.end_date` con el fin inclusivo pedido.
+
+Validación en vivo (TPS, agosto 2026): CSV 182 filas = panel 182, 182/182 normalizadas con MITRE,
+sin advertencias de conciliación.
+
+**Mapeo de clientes.** El `cliente=` exacto de cada empresa está en `data/companies.json`
+(`source_client`), tomado del selector del panel: la mayoría usa guion (`THOMAS TGS-TPS`), cuatro
+no (`THOMAS TGS COL TTI`, `THOMAS TGS LIMITED`, `THOMAS TGS SECURID`, `BAC`) y dos difieren del nombre
+(`THOMAS TGS-GREG` para GREG & SON, `PERU-SSS` para PERU SSS). Cualquier otra variante devuelve 0
+filas sin error, por eso `scripts/probe_sources.py --indicators` compara el registro con la lista
+de clientes de la fuente. La fuente ofrece además `AIRE`, `THOMAS GREG & SONS` (grupo) y
+`THOMAS TGS-ALTA-GERENCIA`, que no están en la lista oficial y no se registran.
+
+**Escala de riesgo.** El CSV real ya no trae la columna `Riesgo`: el nivel se calcula siempre desde
+`severity` con los umbrales del código (≤50 Bajo, >50 Medio, >70 Alto, >90 Crítico). El panel usa
+otras bandas (0-25 / 26-50 / 51-75 / 76-100), por lo que sus porcentajes no coinciden con los del
+informe. Unificar la escala es una decisión pendiente del cliente.
+
 **Qué se perdió con el Excel.** El ranking "Top 10 correos de rareza" (sección 6.1 del informe) salía
-de una hoja precalculada del Excel que el CSV de alarmas no trae: ahora el informe lo declara "no
-disponible" en lugar de inventarlo. El endpoint `indicadores.php` está disponible en el cliente y en
-`scripts/probe_sources.py`, pero su formato todavía no está mapeado (pendiente de una muestra real).
+de una hoja precalculada del Excel que ninguna de las dos fuentes trae: el informe lo declara "no
+disponible" en lugar de inventarlo.
 
 **Auditoría.** Cada descarga nueva registra una fila en `in_data_imports` (hash del payload, filas,
 advertencias, URL sin credenciales) contra la `in_data_sources` de la empresa (`source_type='api'`).

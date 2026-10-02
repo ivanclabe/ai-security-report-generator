@@ -159,6 +159,17 @@ async def test_endpoint_paths_are_configurable_too(server):
     assert request.url == "https://source.test/export/alarmas.php"
 
 
+async def test_an_endpoint_can_live_on_another_host_via_an_absolute_path(server):
+    client = build_client(
+        server,
+        base_url="http://10.2.85.8/ProyectoSOC/views",
+        indicators_path="https://indicadores.example/views/indicadores.php",
+    )
+    assert _alarms(client).url == "http://10.2.85.8/ProyectoSOC/views/detallado_alarmas.php"
+    indicators = build_indicators_request(client.config, "X", START.date(), END.date())
+    assert indicators.url == "https://indicadores.example/views/indicadores.php"
+
+
 async def test_trailing_slash_in_base_url_is_harmless(server):
     client = build_client(server, base_url="https://192.168.80.50/")
     assert _alarms(client).url == "https://192.168.80.50/detallado_alarmas.php"

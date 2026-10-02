@@ -8,7 +8,15 @@ PROJECT_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 REAL_MOCK_DATA_PATH = PROJECT_ROOT / "data" / "mock_security_data.json"
-ALARMS_FIXTURE_PATH = BACKEND_DIR / "tests" / "fixtures" / "alarmas_tps_julio.csv"
+FIXTURES_DIR = BACKEND_DIR / "tests" / "fixtures"
+# 169 alarms of THOMAS TGS-TPS (July 2026), in the exact shape of the live export
+# (detallado_alarmas.php?export=csv): UTF-8 with BOM, its 28 columns in its order.
+ALARMS_FIXTURE_PATH = FIXTURES_DIR / "alarmas_tps_julio.csv"
+ALARMS_EXPECTED_RISK_PATH = FIXTURES_DIR / "alarmas_tps_julio_riesgo_esperado.json"
+# A real response of the export with no rows (header only), as delivered by the source.
+ALARMS_EMPTY_EXPORT_PATH = FIXTURES_DIR / "alarmas_export_vacio.csv"
+# Synthetic data inside the exact markup of the live indicators page (indicadores.php).
+INDICATORS_FIXTURE_PATH = FIXTURES_DIR / "indicadores_albatrus_sintetico.html"
 MITRE_CATALOG_PATH = PROJECT_ROOT / "data" / "mitre_tactics.json"
 COMPANIES_FILE_PATH = PROJECT_ROOT / "data" / "companies.json"
 
