@@ -2,7 +2,8 @@
 so tests exercise the real SourceClient / acquisition service / provider
 without any network. It behaves like the real server in the ways that matter:
 
-* HTTP Basic Auth on every endpoint (401 + WWW-Authenticate otherwise);
+* HTTP Basic Auth on every endpoint (401 + WWW-Authenticate otherwise), so a
+  client that only sends credentials when challenged sees the same handshake;
 * a PHP-style session cookie it issues on the first authenticated request;
 * the alarms export filters by `cliente=` (comparing like the data does:
   case/hyphen/space-insensitive) and answers a header-only CSV when nothing matches;
@@ -98,7 +99,8 @@ class FakeSourceServer:
         self.alarms_csv = alarms_csv
         self.username = username
         self.password = password
-        self.requests: list[httpx.Request] = []
+        self.requests: list[httpx.Request] = []  # everything received, auth challenges included
+        self.served: list[httpx.Request] = []  # requests that got past authentication
         # Statuses to answer (once each, in order) before behaving normally -- e.g. [401] with valid
         # credentials is exactly "the session expired".
         self.fail_next: deque[int] = deque()
@@ -123,11 +125,11 @@ class FakeSourceServer:
 
     @property
     def alarm_requests(self) -> list[httpx.Request]:
-        return [r for r in self.requests if r.url.path.endswith("detallado_alarmas.php")]
+        return [r for r in self.served if r.url.path.endswith("detallado_alarmas.php")]
 
     @property
     def indicator_requests(self) -> list[httpx.Request]:
-        return [r for r in self.requests if r.url.path.endswith("indicadores.php")]
+        return [r for r in self.served if r.url.path.endswith("indicadores.php")]
 
     def _authorized(self, request: httpx.Request) -> bool:
         header = request.headers.get("authorization", "")
@@ -205,6 +207,7 @@ class FakeSourceServer:
                 self.sessions_issued += 1
                 headers["Set-Cookie"] = f"PHPSESSID=session-{self.sessions_issued}; Path=/"
 
+        self.served.append(request)
         path = request.url.path
         if path.endswith("/detallado_alarmas.php"):
             if self.html_instead_of_csv:

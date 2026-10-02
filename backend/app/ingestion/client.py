@@ -3,11 +3,21 @@ and renewal when the session expires.
 
 Authentication
 --------------
-Every request carries HTTP Basic Auth. If the server instead (or additionally)
-uses a login *form* with a PHP session -- it answers with a redirect to a login
-page, or with a login page itself -- the client reads that form, submits the
-configured credentials, keeps the session cookie and retries the request. The
-form is only ever submitted to the same host that served it.
+Credentials are sent only when the server asks for them, and only the way it
+asks:
+
+* a login *form* with a PHP session (the real source) -- the server answers with
+  a redirect to a login page, or with a login page itself. The client reads that
+  form, submits the configured credentials once, keeps the session cookie and
+  retries the request; from then on only the cookie travels. The form is only
+  ever submitted to the same host that served it.
+* HTTP Basic Auth -- the server answers 401 with `WWW-Authenticate: Basic`. The
+  client retries with Basic Auth and, having learned the server wants it, sends
+  it up front on every later request (Basic has no session of its own).
+
+Not sending Basic Auth speculatively matters because the source is plain http:
+a Basic header is the password in base64 on every request, while the form
+login exposes it once per session.
 
 Session model
 -------------
@@ -46,6 +56,10 @@ from app.ingestion.requests import SourceRequest
 logger = logging.getLogger(__name__)
 
 
+def _asks_for_basic_auth(response: httpx.Response) -> bool:
+    return response.headers.get("www-authenticate", "").lower().startswith("basic")
+
+
 @dataclass(frozen=True)
 class SourceResponse:
     content: bytes
@@ -60,6 +74,8 @@ class SourceClient:
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
         self._authenticated = False
+        # Learned from a `WWW-Authenticate: Basic` challenge; kept across session renewals.
+        self._use_basic_auth = False
         self._lock = asyncio.Lock()
         self.last_login_method: str | None = None  # "basic" | "form" -- diagnostics only
 
@@ -81,7 +97,6 @@ class SourceClient:
         async with self._lock:
             if self._client is None:
                 self._client = httpx.AsyncClient(
-                    auth=httpx.BasicAuth(self._config.username, self._config.password),
                     verify=self._config.tls_verify,
                     timeout=httpx.Timeout(self._config.timeout_seconds),
                     follow_redirects=False,
@@ -99,11 +114,14 @@ class SourceClient:
         renewed_session = False
         logged_in_with_form = False
 
-        for _ in range(4):  # hard bound: initial try + one renewal + one form login + its retry
+        for _ in range(5):  # hard bound: initial try + Basic challenge + one renewal + one form login + its retry
             client = await self._get_client()
             response, elapsed = await self._send(client, request.url, request.params)
 
             if response.status_code == 401:
+                if not self._use_basic_auth and _asks_for_basic_auth(response):
+                    self._use_basic_auth = True
+                    continue
                 if self._authenticated and not renewed_session:
                     logger.info("Fuente %s: sesión expirada (HTTP 401); reautenticando", host)
                     async with self._lock:
@@ -138,7 +156,10 @@ class SourceClient:
 
         self._raise_for_status(response)
         self._authenticated = True
-        self.last_login_method = "form" if logged_in_with_form else (self.last_login_method or "basic")
+        if logged_in_with_form:
+            self.last_login_method = "form"
+        elif self._use_basic_auth:
+            self.last_login_method = "basic"
         logger.info(
             "Fuente %s: %s HTTP %s en %.2fs (%d bytes)",
             host,
@@ -202,7 +223,12 @@ class SourceClient:
         host = self._config.host
         started = time.monotonic()
         try:
-            response = await client.get(url, params=params)
+            auth = (
+                httpx.BasicAuth(self._config.username, self._config.password)
+                if self._use_basic_auth
+                else httpx.USE_CLIENT_DEFAULT
+            )
+            response = await client.get(url, params=params, auth=auth)
         except httpx.TimeoutException as exc:
             raise SourceUnavailableError(
                 f"Tiempo de espera agotado ({self._config.timeout_seconds:g}s) consultando {host}."

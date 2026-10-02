@@ -154,6 +154,9 @@ Con la fuente HTTP aparecen credenciales de un sistema externo. Reglas aplicadas
   formulario de login (con las credenciales) si la acción apunta al mismo host que `SOURCE_BASE_URL`;
   una página que intente mandarlas a otro servidor se rechaza (`tests/test_source_login_form.py`).
   Una segunda página de login seguida se trata como credencial incorrecta, sin reintentos.
+- **Basic Auth solo si el servidor la pide** (401 con `WWW-Authenticate: Basic`). Con la fuente real
+  (formulario + cookie) la contraseña viaja una vez por sesión, en el POST de login, y no en una
+  cabecera `Authorization` en cada petición (verificado en vivo).
 - **Fixtures sin datos reales**: los archivos de prueba (`tests/fixtures/`) son sintéticos (IPs de
   documentación RFC 5737, host `albatrus.test`); los exports reales del cliente no se versionan.
 - **Sin bucles de autenticación**: un 401 se reintenta una sola vez y solo si antes funcionó, para no

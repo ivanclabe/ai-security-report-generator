@@ -260,7 +260,8 @@ devuelva de otra empresa se descartan con una advertencia, y si ninguna es de la
 la adquisición falla en voz alta.
 
 **Sesión y expiración.** La fuente real no usa Basic Auth sino un formulario de login PHP
-(`PHPSESSID`). El cliente envía Basic Auth (por si un proxy la pide) y, si la respuesta es una
+(`PHPSESSID`). El cliente no envía credenciales de entrada: Basic Auth solo si el servidor
+responde 401 con `WWW-Authenticate: Basic` (y desde ahí la recuerda). Si la respuesta es una
 redirección a una página de login o una página de login servida con 200, lee ese formulario
 (`login_form.py`: campos ocultos/CSRF incluidos), lo envía con `SOURCE_USERNAME`/`SOURCE_PASSWORD`
 y repite la petición original con la cookie de sesión. Reglas de seguridad: solo sigue redirecciones

@@ -1,4 +1,4 @@
-"""SourceClient: login (Basic Auth), session reuse, expiration/renewal, address
+"""SourceClient: login (Basic Auth when challenged), session reuse, expiration/renewal, address
 changes and failure modes -- against the in-memory fake source, no network."""
 from datetime import datetime
 
@@ -43,10 +43,34 @@ async def test_login_sends_basic_auth_and_never_puts_credentials_in_the_url(serv
 
     assert response.status_code == 200
     assert response.content_type.startswith("text/csv")
-    sent = server.requests[0]
+    challenge, sent = server.requests
+    assert "authorization" not in challenge.headers  # nothing is sent until the server asks for it
     assert sent.headers["authorization"].startswith("Basic ")
     assert TEST_PASSWORD not in str(sent.url) and TEST_USERNAME not in str(sent.url)
     assert not sent.url.username and not sent.url.password
+    assert client.last_login_method == "basic"
+
+
+async def test_once_basic_auth_was_asked_for_it_is_sent_up_front(server):
+    client = build_client(server)
+    await client.fetch(_alarms(client))
+    await client.fetch(_alarms(client))
+
+    assert len(server.requests) == 3  # challenge, ok, ok -- no second handshake
+    assert server.requests[2].headers["authorization"].startswith("Basic ")
+
+
+async def test_basic_auth_is_never_sent_to_a_server_that_does_not_ask_for_it():
+    # The real source uses a login form over plain http: a speculative Basic header
+    # would put the password on the wire with every request.
+    server = FakeSourceServer(b"id,cliente\n1,X\n")
+    server.form_login = True
+    client = build_client(server)
+    await client.fetch(_alarms(client))
+    await client.fetch(_alarms(client))
+
+    assert all("authorization" not in r.headers for r in server.requests)
+    assert len(server.login_posts) == 1  # the password travelled once, in the login form
 
 
 async def test_wrong_credentials_raise_a_clear_error_and_are_not_retried(server):
@@ -57,7 +81,9 @@ async def test_wrong_credentials_raise_a_clear_error_and_are_not_retried(server)
 
     assert "SOURCE_PASSWORD" in str(excinfo.value)  # tells the operator what to fix...
     assert "wrong-password" not in str(excinfo.value)  # ...without ever echoing a secret
-    assert len(server.requests) == 1  # a rejected login is not a reason to hammer the server
+    # one attempt with credentials (after the server's challenge): a rejected login is not a
+    # reason to hammer the server
+    assert [("authorization" in r.headers) for r in server.requests] == [False, True]
 
 
 async def test_missing_configuration_fails_before_any_request(server):
@@ -102,7 +128,7 @@ async def test_session_is_reused_between_requests(server):
 
     assert client._client is first_http_client  # same connection pool / cookie jar
     assert server.sessions_issued == 1  # the 2nd request replayed the session cookie
-    assert "phpsessid" in server.requests[1].headers["cookie"].lower()
+    assert "phpsessid" in server.requests[-1].headers["cookie"].lower()
 
 
 async def test_expired_session_is_renewed_transparently_once(server):
@@ -113,7 +139,7 @@ async def test_expired_session_is_renewed_transparently_once(server):
     response = await client.fetch(_alarms(client))
 
     assert response.status_code == 200
-    assert len(server.requests) == 3  # ok, 401, retried-ok
+    assert len(server.requests) == 4  # challenge, ok, 401, retried-ok
     assert server.sessions_issued == 2  # a brand-new session after dropping the stale cookie
 
 
@@ -126,7 +152,7 @@ async def test_session_that_cannot_be_renewed_fails_instead_of_looping(server):
         await client.fetch(_alarms(client))
 
     assert "expiró" in str(excinfo.value)
-    assert len(server.requests) == 3  # ok, 401, one retry (401) -- then stop
+    assert len(server.requests) == 4  # challenge, ok, 401, one retry (401) -- then stop
 
 
 async def test_client_can_be_closed_and_reopened(server):
@@ -147,10 +173,11 @@ async def test_changing_the_ip_in_the_config_redirects_requests_without_code_cha
     await old.fetch(_alarms(old))
     await new.fetch(_alarms(new))
 
-    assert server.requests[0].url.host == "192.168.80.50"
-    assert server.requests[0].url.path == "/detallado_alarmas.php"
-    assert server.requests[1].url.host == "10.20.30.40" and server.requests[1].url.port == 8443
-    assert server.requests[1].url.path == "/albatroz/detallado_alarmas.php"
+    first, second = server.served
+    assert first.url.host == "192.168.80.50"
+    assert first.url.path == "/detallado_alarmas.php"
+    assert second.url.host == "10.20.30.40" and second.url.port == 8443
+    assert second.url.path == "/albatroz/detallado_alarmas.php"
 
 
 async def test_endpoint_paths_are_configurable_too(server):

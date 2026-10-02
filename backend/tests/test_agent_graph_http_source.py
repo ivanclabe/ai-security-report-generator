@@ -78,6 +78,7 @@ async def test_new_report_flow_delivers_the_sources_data_to_the_agent(
         )
     )[0]
     source_server.requests.clear()
+    source_server.served.clear()
     http_provider._acquisition._batches.clear()  # start the report from a cold cache
 
     _stub_llm(
